@@ -20,7 +20,14 @@
 
 X-TODO is an always-on desktop to-do note. A frameless slip stays on your desktop: one line per task, click the checkbox to mark it done. Edits save on their own and come back after a restart, with no account, no network, and nothing to launch. It ships as a single exe and stays within a few MB of RAM.
 
-<div align="center"><img src=".assets/screenshot.png" width="320"></div>
+<div align="center">
+<table>
+<tr>
+<td align="center"><img src=".assets/screenshot.png" width="320" alt="X-TODO screenshot"></td>
+<td align="center"><img src=".assets/demo.gif" width="320" alt="X-TODO demo"></td>
+</tr>
+</table>
+</div>
 
 ## Features
 
@@ -33,7 +40,7 @@ X-TODO is an always-on desktop to-do note. A frameless slip stays on your deskto
 
 ## Download
 
-Open [Actions](https://github.com/xwysyy/X-TODO/actions), pick the latest green run, and grab `x-todo` from the **Artifacts** at the bottom of the page. Unzip and double-click `x-todo.exe`. Portable, no install.
+Open [Releases](https://github.com/xwysyy/X-TODO/releases), download `x-todo.exe` from the latest version, and double-click it. Portable, no install. Development builds are still available from the [Actions](https://github.com/xwysyy/X-TODO/actions) artifacts.
 
 > Tasks are stored in `%APPDATA%\x-todo\`. Uninstalling leaves it untouched; copy that folder to another machine and your list comes along.
 
@@ -49,11 +56,9 @@ Open [Actions](https://github.com/xwysyy/X-TODO/actions), pick the latest green 
 | Move / resize | Drag the title bar to move, drag the edges to resize |
 | Switch layout | Right-click the tray icon: normal window / desktop / side capsule |
 
-<div align="center"><img src=".assets/demo.gif" width="320"></div>
-
 ## Build
 
-On push, GitHub Actions builds it with MSVC and uploads the exe to that run's Artifacts, so there is nothing to install locally.
+On push, GitHub Actions builds it with MSVC and uploads the exe to that run's Artifacts. Version tags such as `v0.1.0` also publish a GitHub Release with the exe attached.
 
 To build it yourself on Windows with Visual Studio (Desktop development with C++):
 

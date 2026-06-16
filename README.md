@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src=".assets/logo.svg" width="96" alt="X-TODO">
+
 # X-TODO
 
 **A sticky to-do note that lives on your desktop.**
@@ -18,8 +20,7 @@
 
 X-TODO is an always-on desktop to-do note. A frameless slip stays on your desktop: one line per task, click the checkbox to mark it done. Edits save on their own and come back after a restart, with no account, no network, and nothing to launch. It ships as a single exe and stays within a few MB of RAM.
 
-<!-- Run it, take a screenshot, save it as docs/screenshot.png, then uncomment: -->
-<!-- <div align="center"><img src="docs/screenshot.png" width="320"></div> -->
+<div align="center"><img src=".assets/screenshot.png" width="320"></div>
 
 ## Features
 
@@ -47,6 +48,8 @@ Open [Actions](https://github.com/xwysyy/X-TODO/actions), pick the latest green 
 | Reorder | Drag the handle on the right of an item |
 | Move / resize | Drag the title bar to move, drag the edges to resize |
 | Switch layout | Right-click the tray icon: normal window / desktop / side capsule |
+
+<div align="center"><img src=".assets/demo.gif" width="320"></div>
 
 ## Build
 

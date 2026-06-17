@@ -96,7 +96,6 @@ private:
     HICON CreateTrayIconHandle();
     void  ShowTrayMenu();
     void  ShowTitleMenu();                 // 标题栏菜单按钮弹出
-    void  AppendMenuItems(HMENU menu);     // 模式 + 语言 + 自启（托盘与标题栏共用）
     void  HandleMenuCommand(UINT cmd);
     void  SetLanguage(Lang lang);
 

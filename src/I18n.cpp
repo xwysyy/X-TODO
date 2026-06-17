@@ -19,6 +19,8 @@ const wchar_t* T(Str key, Lang lang) {
         case Str::DeleteItemMsg: return zh ? L"删除这一条？"    : L"Delete this item?";
         case Str::ClearAllMsg:   return zh ? L"清空所有已完成条目？此操作不可撤销。"
                                            : L"Clear all completed items? This cannot be undone.";
+        case Str::ConfirmOk:     return zh ? L"确认"            : L"OK";
+        case Str::ConfirmCancel: return zh ? L"取消"            : L"Cancel";
         case Str::LoadFailedMsg: return zh ? L"读取待办数据失败，原文件已备份为 data.txt.corrupt.bak，本次以空白开始。"
                                            : L"Could not read your data. The original was backed up as data.txt.corrupt.bak; starting empty.";
     }

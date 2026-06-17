@@ -18,6 +18,8 @@ enum class Str {
     Clear,        // 清空
     DeleteItemMsg,// 删除确认正文
     ClearAllMsg,  // 清空确认正文
+    ConfirmOk,    // 确认按钮
+    ConfirmCancel,// 取消按钮
     LoadFailedMsg // 数据读取失败提示
 };
 

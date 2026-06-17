@@ -64,34 +64,483 @@ void CenterWindowOverOwner(HWND dialog, HWND owner) {
     SetWindowPos(dialog, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
-struct MessageBoxCentering {
-    HWND owner = nullptr;
-    HHOOK hook = nullptr;
-};
-
-thread_local MessageBoxCentering* g_messageBoxCentering = nullptr;
-
-LRESULT CALLBACK CenterMessageBoxHook(int code, WPARAM wp, LPARAM lp) {
-    if (code == HCBT_ACTIVATE && g_messageBoxCentering && g_messageBoxCentering->owner) {
-        CenterWindowOverOwner(reinterpret_cast<HWND>(wp), g_messageBoxCentering->owner);
-        if (g_messageBoxCentering->hook) {
-            UnhookWindowsHookEx(g_messageBoxCentering->hook);
-            g_messageBoxCentering->hook = nullptr;
-        }
-        return 0;
-    }
-    return CallNextHookEx(g_messageBoxCentering ? g_messageBoxCentering->hook : nullptr, code, wp, lp);
+COLORREF ToColorRef(uint32_t rgb) {
+    return RGB((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
 }
 
-int CenteredMessageBox(HWND owner, const wchar_t* text, const wchar_t* caption, UINT flags) {
-    MessageBoxCentering centering{ owner, nullptr };
-    MessageBoxCentering* previous = g_messageBoxCentering;
-    g_messageBoxCentering = &centering;
-    centering.hook = SetWindowsHookExW(WH_CBT, CenterMessageBoxHook, nullptr, GetCurrentThreadId());
-    int result = MessageBoxW(owner, text, caption, flags);
-    if (centering.hook) UnhookWindowsHookEx(centering.hook);
-    g_messageBoxCentering = previous;
-    return result;
+uint32_t BlendColor(uint32_t fg, uint32_t bg, float a) {
+    int fr = (fg >> 16) & 0xFF, fg2 = (fg >> 8) & 0xFF, fb = fg & 0xFF;
+    int br = (bg >> 16) & 0xFF, bg2 = (bg >> 8) & 0xFF, bb = bg & 0xFF;
+    int r = br + (int)((fr - br) * a + 0.5f);
+    int g = bg2 + (int)((fg2 - bg2) * a + 0.5f);
+    int b = bb + (int)((fb - bb) * a + 0.5f);
+    return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+}
+
+int DpiPx(HWND owner, float v) {
+    UINT dpi = owner ? GetDpiForWindow(owner) : 96;
+    return (int)(v * (float)dpi / 96.0f + 0.5f);
+}
+
+HFONT CreateUiFont(HWND owner, float size, bool bold = false) {
+    LOGFONTW lf{};
+    lf.lfHeight = -DpiPx(owner, size);
+    lf.lfWeight = bold ? FW_SEMIBOLD : FW_NORMAL;
+    lf.lfQuality = CLEARTYPE_QUALITY;
+    wcscpy_s(lf.lfFaceName, Theme::kFontFamily);
+    return CreateFontIndirectW(&lf);
+}
+
+void FillRound(HDC dc, const RECT& r, int radius, uint32_t color) {
+    HBRUSH brush = CreateSolidBrush(ToColorRef(color));
+    HGDIOBJ oldBrush = SelectObject(dc, brush);
+    HGDIOBJ oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
+    RoundRect(dc, r.left, r.top, r.right, r.bottom, radius, radius);
+    SelectObject(dc, oldPen);
+    SelectObject(dc, oldBrush);
+    DeleteObject(brush);
+}
+
+void StrokeRound(HDC dc, const RECT& r, int radius, uint32_t color) {
+    HPEN pen = CreatePen(PS_SOLID, 1, ToColorRef(color));
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    RoundRect(dc, r.left, r.top, r.right, r.bottom, radius, radius);
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(pen);
+}
+
+void DrawTextInRect(HDC dc, const std::wstring& text, RECT r, HFONT font,
+                    uint32_t color, UINT flags) {
+    HGDIOBJ oldFont = SelectObject(dc, font);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, ToColorRef(color));
+    DrawTextW(dc, text.c_str(), (int)text.size(), &r, flags);
+    SelectObject(dc, oldFont);
+}
+
+bool RegisterPopupClass(const wchar_t* className, WNDPROC proc) {
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
+    wc.style = CS_DBLCLKS | CS_DROPSHADOW;
+    wc.lpfnWndProc = proc;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = nullptr;
+    wc.lpszClassName = className;
+    if (RegisterClassExW(&wc)) return true;
+    return GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+}
+
+void ApplyRoundRegion(HWND hwnd, int w, int h, int radius) {
+    HRGN rgn = CreateRoundRectRgn(0, 0, w + 1, h + 1, radius, radius);
+    if (!rgn) return;
+    if (!SetWindowRgn(hwnd, rgn, TRUE)) DeleteObject(rgn);
+}
+
+enum class ConfirmButton { None, Ok, Cancel };
+
+struct ConfirmState {
+    HWND hwnd = nullptr;
+    HWND owner = nullptr;
+    std::wstring message;
+    Lang lang = Lang::Zh;
+    bool danger = true;
+    bool done = false;
+    bool result = false;
+    ConfirmButton hover = ConfirmButton::None;
+    ConfirmButton pressed = ConfirmButton::None;
+    int w = 0;
+    int h = 0;
+};
+
+RECT ConfirmOkRect(const ConfirmState& s) {
+    int bw = DpiPx(s.owner, 82), bh = DpiPx(s.owner, 30);
+    int gap = DpiPx(s.owner, 8), pad = DpiPx(s.owner, 18);
+    return RECT{ s.w - pad - bw, s.h - pad - bh, s.w - pad, s.h - pad };
+}
+
+RECT ConfirmCancelRect(const ConfirmState& s) {
+    RECT ok = ConfirmOkRect(s);
+    int bw = ok.right - ok.left, gap = DpiPx(s.owner, 8);
+    return RECT{ ok.left - gap - bw, ok.top, ok.left - gap, ok.bottom };
+}
+
+ConfirmButton ConfirmHit(const ConfirmState& s, int x, int y) {
+    POINT p{ x, y };
+    RECT ok = ConfirmOkRect(s), cancel = ConfirmCancelRect(s);
+    if (PtInRect(&ok, p)) return ConfirmButton::Ok;
+    if (PtInRect(&cancel, p)) return ConfirmButton::Cancel;
+    return ConfirmButton::None;
+}
+
+void EndConfirm(ConfirmState* s, bool result) {
+    s->result = result;
+    s->done = true;
+    if (s->hwnd && IsWindow(s->hwnd)) DestroyWindow(s->hwnd);
+}
+
+void DrawButton(HDC dc, HWND owner, const RECT& r, const std::wstring& label,
+                bool primary, bool hover, bool pressed) {
+    int radius = DpiPx(owner, 9);
+    uint32_t fill = primary ? Theme::kDanger : Theme::kPaper;
+    if (primary && hover) fill = BlendColor(Theme::kDanger, 0xA95745, pressed ? 0.55f : 0.25f);
+    if (!primary && hover) fill = BlendColor(Theme::kHover, Theme::kPaper, pressed ? 0.10f : 0.05f);
+    FillRound(dc, r, radius, fill);
+    StrokeRound(dc, r, radius, primary ? Theme::kDanger : Theme::kPaperEdge);
+    HFONT font = CreateUiFont(owner, 12.0f, primary);
+    RECT tr = r;
+    DrawTextInRect(dc, label, tr, font, primary ? 0xFFFFFF : Theme::kText,
+                   DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    DeleteObject(font);
+}
+
+LRESULT CALLBACK ConfirmProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    ConfirmState* s = reinterpret_cast<ConfirmState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (msg == WM_NCCREATE) {
+        auto cs = reinterpret_cast<CREATESTRUCTW*>(lp);
+        s = static_cast<ConfirmState*>(cs->lpCreateParams);
+        s->hwnd = hwnd;
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(s));
+        return TRUE;
+    }
+    if (!s) return DefWindowProcW(hwnd, msg, wp, lp);
+
+    switch (msg) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC dc = BeginPaint(hwnd, &ps);
+        RECT rc{}; GetClientRect(hwnd, &rc);
+        FillRound(dc, rc, DpiPx(s->owner, 16), Theme::kPaper);
+        StrokeRound(dc, RECT{ 0, 0, rc.right, rc.bottom }, DpiPx(s->owner, 16), Theme::kPaperEdge);
+
+        int pad = DpiPx(s->owner, 20);
+        int icon = DpiPx(s->owner, 30);
+        uint32_t accent = s->danger ? Theme::kDanger : Theme::kCheckFill;
+        RECT iconRect{ pad, DpiPx(s->owner, 38), pad + icon, DpiPx(s->owner, 38) + icon };
+        FillRound(dc, iconRect, icon, BlendColor(accent, Theme::kPaper, 0.12f));
+        StrokeRound(dc, iconRect, icon, accent);
+        HFONT titleFont = CreateUiFont(s->owner, 13.0f, true);
+        HFONT textFont = CreateUiFont(s->owner, 13.0f, false);
+        HFONT iconFont = CreateUiFont(s->owner, 15.0f, true);
+        RECT ir = iconRect;
+        DrawTextInRect(dc, L"!", ir, iconFont, accent,
+                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        RECT title{ pad + icon + DpiPx(s->owner, 12), DpiPx(s->owner, 26),
+                    rc.right - pad, DpiPx(s->owner, 48) };
+        DrawTextInRect(dc, L"X-TODO", title, titleFont, Theme::kText,
+                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        RECT msgRect{ title.left, DpiPx(s->owner, 52), rc.right - pad, DpiPx(s->owner, 112) };
+        DrawTextInRect(dc, s->message, msgRect, textFont, Theme::kText,
+                       DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
+        DeleteObject(iconFont);
+        DeleteObject(textFont);
+        DeleteObject(titleFont);
+
+        RECT cancel = ConfirmCancelRect(*s);
+        RECT ok = ConfirmOkRect(*s);
+        DrawButton(dc, s->owner, cancel, T(Str::ConfirmCancel, s->lang),
+                   false, s->hover == ConfirmButton::Cancel, s->pressed == ConfirmButton::Cancel);
+        DrawButton(dc, s->owner, ok, T(Str::ConfirmOk, s->lang),
+                   true, s->hover == ConfirmButton::Ok, s->pressed == ConfirmButton::Ok);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_MOUSEMOVE: {
+        ConfirmButton h = ConfirmHit(*s, GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+        if (h != s->hover) { s->hover = h; InvalidateRect(hwnd, nullptr, FALSE); }
+        return 0;
+    }
+    case WM_LBUTTONDOWN:
+        s->pressed = ConfirmHit(*s, GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+        SetCapture(hwnd);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    case WM_LBUTTONUP: {
+        ConfirmButton pressed = s->pressed;
+        if (GetCapture() == hwnd) ReleaseCapture();
+        ConfirmButton hit = ConfirmHit(*s, GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+        s->pressed = ConfirmButton::None;
+        InvalidateRect(hwnd, nullptr, FALSE);
+        if (hit == pressed && hit == ConfirmButton::Ok) EndConfirm(s, true);
+        else if (hit == pressed && hit == ConfirmButton::Cancel) EndConfirm(s, false);
+        return 0;
+    }
+    case WM_CAPTURECHANGED:
+        if (!s->done && (HWND)lp != hwnd && s->pressed != ConfirmButton::None) {
+            s->pressed = ConfirmButton::None;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    case WM_KEYDOWN:
+        if (wp == VK_RETURN) { EndConfirm(s, true); return 0; }
+        if (wp == VK_ESCAPE) { EndConfirm(s, false); return 0; }
+        break;
+    case WM_CLOSE:
+        EndConfirm(s, false);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+bool ShowThemedConfirm(HWND owner, const wchar_t* text, Lang lang, bool danger) {
+    const wchar_t* cls = L"XTodoConfirmPopup";
+    if (!RegisterPopupClass(cls, ConfirmProc)) return false;
+    ConfirmState state{};
+    state.owner = owner;
+    state.message = text ? text : L"";
+    state.lang = lang;
+    state.danger = danger;
+    state.w = DpiPx(owner, 340);
+    state.h = DpiPx(owner, 168);
+
+    HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, cls, L"",
+                                WS_POPUP, 0, 0, state.w, state.h,
+                                owner, nullptr, GetModuleHandleW(nullptr), &state);
+    if (!hwnd) return false;
+    ApplyRoundRegion(hwnd, state.w, state.h, DpiPx(owner, 16));
+    CenterWindowOverOwner(hwnd, owner);
+    EnableWindow(owner, FALSE);
+    ShowWindow(hwnd, SW_SHOW);
+    SetForegroundWindow(hwnd);
+    SetFocus(hwnd);
+
+    MSG msg{};
+    BOOL got = TRUE;
+    while (!state.done && (got = GetMessageW(&msg, nullptr, 0, 0)) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    if (got == 0) PostQuitMessage((int)msg.wParam);
+
+    if (IsWindow(hwnd)) DestroyWindow(hwnd);
+    EnableWindow(owner, TRUE);
+    SetForegroundWindow(owner);
+    return state.result;
+}
+
+struct PopupMenuItem {
+    UINT cmd = 0;
+    std::wstring text;
+    bool separator = false;
+    bool checked = false;
+    bool danger = false;
+    bool enabled = true;
+    int indent = 0;
+};
+
+struct PopupMenuState {
+    HWND hwnd = nullptr;
+    HWND owner = nullptr;
+    const std::vector<PopupMenuItem>* items = nullptr;
+    bool done = false;
+    UINT result = 0;
+    int hover = -1;
+    int w = 0;
+    int h = 0;
+    int rowH = 0;
+    int sepH = 0;
+};
+
+int MenuItemAt(const PopupMenuState& s, int y) {
+    if (!s.items) return -1;
+    int top = DpiPx(s.owner, 6);
+    for (size_t i = 0; i < s.items->size(); ++i) {
+        const PopupMenuItem& item = (*s.items)[i];
+        int h = item.separator ? s.sepH : s.rowH;
+        if (y >= top && y < top + h)
+            return (!item.separator && item.enabled) ? (int)i : -1;
+        top += h;
+    }
+    return -1;
+}
+
+void EndPopupMenu(PopupMenuState* s, UINT cmd) {
+    s->result = cmd;
+    s->done = true;
+    if (s->hwnd && GetCapture() == s->hwnd) ReleaseCapture();
+    if (s->hwnd && IsWindow(s->hwnd)) DestroyWindow(s->hwnd);
+}
+
+void DrawCheckMark(HDC dc, const RECT& box, uint32_t color) {
+    HPEN pen = CreatePen(PS_SOLID, 2, ToColorRef(color));
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    int w = box.right - box.left;
+    int h = box.bottom - box.top;
+    MoveToEx(dc, box.left + w / 4, box.top + h / 2, nullptr);
+    LineTo(dc, box.left + w / 2, box.top + h * 3 / 4);
+    LineTo(dc, box.right - w / 5, box.top + h / 4);
+    SelectObject(dc, oldPen);
+    DeleteObject(pen);
+}
+
+int MeasurePopupMenuWidth(HWND owner, const std::vector<PopupMenuItem>& items) {
+    HDC dc = GetDC(owner);
+    HFONT font = CreateUiFont(owner, 13.0f);
+    HGDIOBJ oldFont = SelectObject(dc, font);
+    int maxText = 0;
+    for (const auto& item : items) {
+        if (item.separator) continue;
+        SIZE sz{};
+        GetTextExtentPoint32W(dc, item.text.c_str(), (int)item.text.size(), &sz);
+        int textW = sz.cx + DpiPx(owner, 58 + item.indent * 16);
+        if (textW > maxText) maxText = textW;
+    }
+    SelectObject(dc, oldFont);
+    DeleteObject(font);
+    ReleaseDC(owner, dc);
+    int minW = DpiPx(owner, 214);
+    int maxW = DpiPx(owner, 300);
+    return ClampInt(maxText, minW, maxW);
+}
+
+int MeasurePopupMenuHeight(HWND owner, const std::vector<PopupMenuItem>& items) {
+    int rowH = DpiPx(owner, 30), sepH = DpiPx(owner, 9);
+    int h = DpiPx(owner, 12);
+    for (const auto& item : items) h += item.separator ? sepH : rowH;
+    return h;
+}
+
+LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    PopupMenuState* s = reinterpret_cast<PopupMenuState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (msg == WM_NCCREATE) {
+        auto cs = reinterpret_cast<CREATESTRUCTW*>(lp);
+        s = static_cast<PopupMenuState*>(cs->lpCreateParams);
+        s->hwnd = hwnd;
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(s));
+        return TRUE;
+    }
+    if (!s) return DefWindowProcW(hwnd, msg, wp, lp);
+
+    switch (msg) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC dc = BeginPaint(hwnd, &ps);
+        RECT rc{}; GetClientRect(hwnd, &rc);
+        FillRound(dc, rc, DpiPx(s->owner, 12), Theme::kPaper);
+        StrokeRound(dc, RECT{ 0, 0, rc.right, rc.bottom }, DpiPx(s->owner, 12), Theme::kPaperEdge);
+        HFONT font = CreateUiFont(s->owner, 13.0f);
+        int y = DpiPx(s->owner, 6);
+        int pad = DpiPx(s->owner, 10);
+        for (size_t i = 0; i < s->items->size(); ++i) {
+            const PopupMenuItem& item = (*s->items)[i];
+            if (item.separator) {
+                int mid = y + s->sepH / 2;
+                HPEN pen = CreatePen(PS_SOLID, 1, ToColorRef(Theme::kDivider));
+                HGDIOBJ oldPen = SelectObject(dc, pen);
+                MoveToEx(dc, pad, mid, nullptr);
+                LineTo(dc, rc.right - pad, mid);
+                SelectObject(dc, oldPen);
+                DeleteObject(pen);
+                y += s->sepH;
+                continue;
+            }
+            RECT row{ DpiPx(s->owner, 6), y, rc.right - DpiPx(s->owner, 6), y + s->rowH };
+            if ((int)i == s->hover)
+                FillRound(dc, row, DpiPx(s->owner, 8), BlendColor(Theme::kHover, Theme::kPaper, 0.06f));
+            if (item.checked) {
+                RECT ck{ row.left + DpiPx(s->owner, 10), row.top + DpiPx(s->owner, 8),
+                         row.left + DpiPx(s->owner, 22), row.top + DpiPx(s->owner, 20) };
+                DrawCheckMark(dc, ck, Theme::kCheckFill);
+            }
+            RECT textR{ row.left + DpiPx(s->owner, 34 + item.indent * 16), row.top,
+                        row.right - DpiPx(s->owner, 10), row.bottom };
+            uint32_t textColor = item.enabled ? (item.danger ? Theme::kDanger : Theme::kText) : Theme::kTextWeak;
+            DrawTextInRect(dc, item.text, textR, font, textColor,
+                           DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            y += s->rowH;
+        }
+        DeleteObject(font);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_MOUSEMOVE: {
+        int h = MenuItemAt(*s, GET_Y_LPARAM(lp));
+        if (h != s->hover) { s->hover = h; InvalidateRect(hwnd, nullptr, FALSE); }
+        return 0;
+    }
+    case WM_LBUTTONUP:
+    case WM_RBUTTONUP: {
+        int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
+        if (x < 0 || x >= s->w || y < 0 || y >= s->h) { EndPopupMenu(s, 0); return 0; }
+        int idx = MenuItemAt(*s, y);
+        EndPopupMenu(s, idx >= 0 ? (*s->items)[idx].cmd : 0);
+        return 0;
+    }
+    case WM_KEYDOWN:
+        if (wp == VK_ESCAPE) { EndPopupMenu(s, 0); return 0; }
+        if (wp == VK_RETURN && s->hover >= 0) {
+            EndPopupMenu(s, (*s->items)[s->hover].cmd);
+            return 0;
+        }
+        if (wp == VK_DOWN || wp == VK_UP) {
+            int count = s->items ? (int)s->items->size() : 0;
+            if (count > 0) {
+                int idx = s->hover;
+                for (int tries = 0; tries < count; ++tries) {
+                    idx = (wp == VK_DOWN) ? (idx + 1 + count) % count : (idx - 1 + count) % count;
+                    if (!(*s->items)[idx].separator && (*s->items)[idx].enabled) {
+                        s->hover = idx;
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                        break;
+                    }
+                }
+            }
+            return 0;
+        }
+        break;
+    case WM_CANCELMODE:
+    case WM_CLOSE:
+        EndPopupMenu(s, 0);
+        return 0;
+    case WM_CAPTURECHANGED:
+        if (!s->done && (HWND)lp != hwnd) EndPopupMenu(s, 0);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+UINT ShowPopupMenu(HWND owner, POINT pt, const std::vector<PopupMenuItem>& items, bool alignRight) {
+    const wchar_t* cls = L"XTodoPopupMenu";
+    if (!RegisterPopupClass(cls, PopupMenuProc)) return 0;
+    PopupMenuState state{};
+    state.owner = owner;
+    state.items = &items;
+    state.rowH = DpiPx(owner, 30);
+    state.sepH = DpiPx(owner, 9);
+    state.w = MeasurePopupMenuWidth(owner, items);
+    state.h = MeasurePopupMenuHeight(owner, items);
+
+    if (alignRight) pt.x -= state.w;
+    HMONITOR monitor = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{ sizeof(mi) };
+    if (monitor && GetMonitorInfoW(monitor, &mi)) {
+        pt.x = ClampInt(pt.x, mi.rcWork.left, mi.rcWork.right - state.w);
+        pt.y = ClampInt(pt.y, mi.rcWork.top, mi.rcWork.bottom - state.h);
+    }
+
+    HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, cls, L"",
+                                WS_POPUP, pt.x, pt.y, state.w, state.h,
+                                nullptr, nullptr, GetModuleHandleW(nullptr), &state);
+    if (!hwnd) return 0;
+    ApplyRoundRegion(hwnd, state.w, state.h, DpiPx(owner, 12));
+    ShowWindow(hwnd, SW_SHOW);
+    SetForegroundWindow(hwnd);
+    SetFocus(hwnd);
+    SetCapture(hwnd);
+
+    MSG msg{};
+    BOOL got = TRUE;
+    while (!state.done && (got = GetMessageW(&msg, nullptr, 0, 0)) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    if (got == 0) PostQuitMessage((int)msg.wParam);
+    if (GetCapture() == hwnd) ReleaseCapture();
+    if (IsWindow(hwnd)) DestroyWindow(hwnd);
+    SetForegroundWindow(owner);
+    return state.result;
 }
 } // namespace
 
@@ -474,22 +923,6 @@ void MainWindow::RemoveTrayIcon() {
     }
 }
 
-void MainWindow::AppendMenuItems(HMENU menu) {
-    AppendMenuW(menu, MF_STRING | (mountMode_ == MountMode::Normal  ? MF_CHECKED : 0), 10, T(Str::ModeNormal, lang_));
-    AppendMenuW(menu, MF_STRING | (mountMode_ == MountMode::Desktop ? MF_CHECKED : 0), 11, T(Str::ModeDesktop, lang_));
-
-    // 侧边胶囊：子菜单选外观样式；选任一即进入胶囊模式并设样式
-    HMENU styleMenu = CreatePopupMenu();
-    const bool inCapsule = (mountMode_ == MountMode::Capsule);
-    AppendMenuW(styleMenu, MF_STRING | (inCapsule && capsuleStyle_ == CapsuleStyle::Slim ? MF_CHECKED : 0), 30, T(Str::StyleSlim, lang_));
-    AppendMenuW(styleMenu, MF_STRING | (inCapsule && capsuleStyle_ == CapsuleStyle::Dot  ? MF_CHECKED : 0), 31, T(Str::StyleDot, lang_));
-    AppendMenuW(menu, MF_POPUP | (inCapsule ? MF_CHECKED : 0), (UINT_PTR)styleMenu, T(Str::ModeCapsule, lang_));
-
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, 20, T(Str::ToggleLang, lang_));
-    AppendMenuW(menu, MF_STRING | (Autostart::IsEnabled() ? MF_CHECKED : 0), 2, T(Str::Autostart, lang_));
-}
-
 void MainWindow::HandleMenuCommand(UINT cmd) {
     switch (cmd) {
         case 1:  Show();                              break;
@@ -509,38 +942,52 @@ void MainWindow::HandleMenuCommand(UINT cmd) {
 void MainWindow::ShowTrayMenu() {
     const bool wasShrunk = capsuleShrunk(); // (R1-F001) 记录弹出前是否折叠
 
-    HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, 1, T(Str::Show, lang_));
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuItems(menu);
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, 3, T(Str::Exit, lang_));
+    const bool inCapsule = mountMode_ == MountMode::Capsule;
+    std::vector<PopupMenuItem> items{
+        PopupMenuItem{ 1, T(Str::Show, lang_) },
+        PopupMenuItem{ 0, L"", true },
+        PopupMenuItem{ 10, T(Str::ModeNormal, lang_), false, mountMode_ == MountMode::Normal },
+        PopupMenuItem{ 11, T(Str::ModeDesktop, lang_), false, mountMode_ == MountMode::Desktop },
+        PopupMenuItem{ 0, T(Str::ModeCapsule, lang_), false, false, false, false },
+        PopupMenuItem{ 30, T(Str::StyleSlim, lang_), false, inCapsule && capsuleStyle_ == CapsuleStyle::Slim, false, true, 1 },
+        PopupMenuItem{ 31, T(Str::StyleDot, lang_), false, inCapsule && capsuleStyle_ == CapsuleStyle::Dot, false, true, 1 },
+        PopupMenuItem{ 0, L"", true },
+        PopupMenuItem{ 20, T(Str::ToggleLang, lang_) },
+        PopupMenuItem{ 2, T(Str::Autostart, lang_), false, Autostart::IsEnabled() },
+        PopupMenuItem{ 0, L"", true },
+        PopupMenuItem{ 3, T(Str::Exit, lang_), false, false, true }
+    };
 
     POINT pt;
     GetCursorPos(&pt);
-    SetForegroundWindow(hwnd_); // 经典坑：否则菜单不会自动关闭
     menuOpen_ = true;
-    UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd_, nullptr);
+    UINT cmd = ShowPopupMenu(hwnd_, pt, items, false);
     menuOpen_ = false;                 // 必须在 HandleMenuCommand 前清，且无论返回值
-    DestroyMenu(menu);
     HandleMenuCommand(cmd);
     // (R1-F001) 补判收缩，排除：退出(3)；以及刚由 Show(1) 把折叠胶囊展开的情形（否则光标在窗外会被立刻收回）
     if (cmd != 3 && !(cmd == 1 && wasShrunk)) MaybeCollapseCapsule();
 }
 
 void MainWindow::ShowTitleMenu() {
-    HMENU menu = CreatePopupMenu();
-    AppendMenuItems(menu);
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, 3, T(Str::Exit, lang_));
+    const bool inCapsule = mountMode_ == MountMode::Capsule;
+    std::vector<PopupMenuItem> items{
+        PopupMenuItem{ 10, T(Str::ModeNormal, lang_), false, mountMode_ == MountMode::Normal },
+        PopupMenuItem{ 11, T(Str::ModeDesktop, lang_), false, mountMode_ == MountMode::Desktop },
+        PopupMenuItem{ 0, T(Str::ModeCapsule, lang_), false, false, false, false },
+        PopupMenuItem{ 30, T(Str::StyleSlim, lang_), false, inCapsule && capsuleStyle_ == CapsuleStyle::Slim, false, true, 1 },
+        PopupMenuItem{ 31, T(Str::StyleDot, lang_), false, inCapsule && capsuleStyle_ == CapsuleStyle::Dot, false, true, 1 },
+        PopupMenuItem{ 0, L"", true },
+        PopupMenuItem{ 20, T(Str::ToggleLang, lang_) },
+        PopupMenuItem{ 2, T(Str::Autostart, lang_), false, Autostart::IsEnabled() },
+        PopupMenuItem{ 0, L"", true },
+        PopupMenuItem{ 3, T(Str::Exit, lang_), false, false, true }
+    };
 
     POINT pt{ (LONG)menuRect_.left, (LONG)menuRect_.bottom }; // 弹在菜单按钮下方
     ClientToScreen(hwnd_, &pt);
-    SetForegroundWindow(hwnd_);
     menuOpen_ = true;
-    UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTBUTTON, pt.x, pt.y, 0, hwnd_, nullptr);
+    UINT cmd = ShowPopupMenu(hwnd_, pt, items, false);
     menuOpen_ = false;                 // 必须在 HandleMenuCommand 前清，且无论返回值
-    DestroyMenu(menu);
     HandleMenuCommand(cmd);
     if (cmd != 3) MaybeCollapseCapsule(); // (R1-F001) 非退出：按真实光标位置补判（cmd==3 已 DestroyWindow）
 }
@@ -894,8 +1341,8 @@ void MainWindow::ToggleAutostart() {
 }
 
 bool MainWindow::Confirm(Str message, UINT icon) {
-    return CenteredMessageBox(hwnd_, T(message, lang_), L"X-TODO",
-                              MB_OKCANCEL | icon) == IDOK;
+    (void)icon;
+    return ShowThemedConfirm(hwnd_, T(message, lang_), lang_, true);
 }
 
 void MainWindow::DeleteItem(int itemIndex) {

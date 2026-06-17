@@ -12,6 +12,7 @@ add_executable(x-todo WIN32
     src/main.cpp
     src/MainWindow.cpp
     src/MainWindowView.cpp
+    src/MainWindowTaskbar.cpp
     src/TodoModel.cpp
     src/Store.cpp
     src/Autostart.cpp

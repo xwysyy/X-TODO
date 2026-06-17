@@ -10,13 +10,17 @@ struct WindowGeometry {
 struct UiState {
     bool completedExpanded = false;
     bool alwaysOnTop = true;
-    std::string mountMode = "normal"; // normal | desktop | capsule
+    std::string mountMode = "normal"; // normal | desktop | capsule | taskbar
     std::string lang = "";            // "" 跟随系统；否则 zh | en
     // 胶囊形态：外观样式 + 吸附边 + 沿边比例 + 所在显示器
     std::string capsuleStyle    = "slim";  // slim | dot
     std::string capsuleDockEdge = "right"; // left | right
     double      capsuleDockT    = 0.5;     // 0..1，沿吸附边的归一化纵向位置
     std::string capsuleMonitor  = "";      // 显示器 szDevice（UTF-8），丢失时回退就近
+    // 任务栏嵌入状态条
+    std::string taskbarMonitor  = "";      // 任务栏所在显示器 szDevice（UTF-8）
+    double      taskbarDockT    = 0.18;    // 沿任务栏长边的归一化位置 0..1
+    int         taskbarWidth    = 320;     // 水平状态条宽度，逻辑像素
 };
 
 // 加载结果：区分"文件不存在"（可安全空启动）与"存在但读失败"（须防止覆盖丢失）。

@@ -20,7 +20,10 @@ enum class Str {
     ClearAllMsg,  // 清空确认正文
     ConfirmOk,    // 确认按钮
     ConfirmCancel,// 取消按钮
-    LoadFailedMsg // 数据读取失败提示
+    LoadFailedMsg,// 数据读取失败提示
+    ModeTaskbar,        // 嵌入任务栏（菜单项）
+    TaskbarEmbedFailed, // 任务栏嵌入失败提示
+    TaskbarAllDone      // 任务栏无未完成项文案
 };
 
 const wchar_t* T(Str key, Lang lang);

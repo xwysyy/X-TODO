@@ -24,7 +24,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         if (!window.Create()) {
             code = 1;
         } else {
-            window.Show(false); // 冷启动：胶囊模式保持折叠（唤起才展开）
+            window.InitialShow(); // 冷启动首显：任务栏模式只留状态条，其余模式正常显示
             MSG msg;
             while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
                 TranslateMessage(&msg);

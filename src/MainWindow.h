@@ -14,7 +14,9 @@ constexpr UINT WM_APP_SHOW = WM_APP + 2; // 第二实例请求显示
 inline constexpr wchar_t kWindowClass[] = L"XTodoWindowClass";
 
 // 挂载形态：普通窗口 / 挂到桌面层 / 侧边吸附胶囊
-enum class MountMode { Normal, Desktop, Capsule };
+enum class MountMode { Normal, Desktop, Capsule, Taskbar };
+// 任务栏状态条布局结果：成功 / 瞬时不可用（自动隐藏、过渡）/ 永久失败
+enum class TaskbarLayoutResult { Ok, TransientUnavailable, Fatal };
 
 // 胶囊外观样式（仅 Capsule 形态）：细边长条 / 圆点
 enum class CapsuleStyle { Slim, Dot };
@@ -27,6 +29,7 @@ class MainWindow {
 public:
     bool Create();
     void Show(bool expandCapsule = true);
+    void InitialShow(); // 冷启动首显（任务栏模式只留状态条）
     HWND Hwnd() const { return hwnd_; }
 
 private:
@@ -102,6 +105,24 @@ private:
     // —— 挂载形态（普通 / 挂桌面 / 侧边胶囊）——
     void        SetMountMode(MountMode m);
     void        ApplyMountMode();
+
+    // ---- 任务栏状态条 ----
+    static LRESULT CALLBACK TaskbarWndProcStatic(HWND, UINT, WPARAM, LPARAM);
+    LRESULT     TaskbarWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+    bool        RegisterTaskbarBandClass();
+    bool        TryEnterTaskbarMode(bool userInitiated);
+    void        LeaveTaskbarMode();
+    bool        EnsureTaskbarBand();
+    void        DestroyTaskbarBand();
+    TaskbarLayoutResult LayoutTaskbarBand();
+    void        PaintTaskbarBand(HWND hwnd);
+    void        ShowFromTaskbarBand();
+    void        CompleteTaskbarPreviewItem();
+    void        CaptureTaskbarDockFromBand();
+    void        InvalidateTaskbarBand();
+    void        ClampTaskbarPreviewIndex();
+    void        OnModelOrUiChangedForTaskbarBand();
+    void        ScheduleTaskbarRetry();
     void        SetCapsuleStyle(CapsuleStyle s);
     void        StartCapsuleAnim(bool expand);
     void        OnAnimTick();
@@ -185,6 +206,19 @@ private:
     UINT taskbarCreatedMsg_ = 0; // Explorer 重启后重建托盘图标的消息 ID
 
     Lang         lang_            = Lang::Zh;
+
+    // 任务栏状态条
+    HWND  taskbarHwnd_           = nullptr;
+    HWND  taskbarParent_         = nullptr;
+    bool  taskbarHover_          = false;
+    bool  taskbarPressed_        = false;
+    bool  taskbarDragging_       = false;
+    POINT taskbarPressScreen_{};
+    POINT taskbarPressOffset_{};
+    RECT  taskbarBandRect_{};
+    int   taskbarPreviewIndex_   = 0;
+    bool  taskbarClassRegistered_ = false;
+    int   taskbarRetryCount_     = 0;
     MountMode    mountMode_       = MountMode::Normal;
     CapsuleStyle capsuleStyle_    = CapsuleStyle::Slim; // 胶囊外观
     bool      capsuleExpanded_ = false;  // 胶囊形态下是否已滑出
@@ -202,6 +236,7 @@ private:
     static constexpr int      kAnimSteps   = 16; // 滑动动画帧数（配合 15ms/帧，放慢更柔和）
 
     static constexpr UINT_PTR kSaveTimerId = 1;
+    static constexpr UINT_PTR kTaskbarRetryTimerId = 3; // Explorer 重启后重建状态条的延迟重试
     bool savePending_ = false;
 
     HFONT  editFont_ = nullptr; // 行内编辑框字体

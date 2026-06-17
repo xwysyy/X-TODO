@@ -110,6 +110,7 @@ void MainWindow::RebuildLayout() {
     closeRect_ = D2D1::RectF(W - m - btn, ty, W - m, ty + btn);
     pinRect_   = D2D1::RectF(closeRect_.left - S(4) - btn, ty, closeRect_.left - S(4), ty + btn);
     menuRect_  = D2D1::RectF(pinRect_.left - S(4) - btn, ty, pinRect_.left - S(4), ty + btn);
+    OnModelOrUiChangedForTaskbarBand(); // 模型/UI 变化后刷新任务栏状态条（非任务栏模式早退）
 }
 
 // ——————————————————————————— 命中测试 ———————————————————————————

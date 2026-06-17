@@ -170,17 +170,22 @@ struct ConfirmState {
     ConfirmButton pressed = ConfirmButton::None;
     int w = 0;
     int h = 0;
+    int msgW = 0;   // 正文实测宽（水平居中用）
+    int msgH = 0;   // 正文实测高（按内容算窗口高）
+    int btnW = 0;   // 按钮宽（按文字实测，至少 50）
 };
 
 RECT ConfirmOkRect(const ConfirmState& s) {
-    int bw = DpiPx(s.owner, 82), bh = DpiPx(s.owner, 30);
-    int gap = DpiPx(s.owner, 8), pad = DpiPx(s.owner, 18);
-    return RECT{ s.w - pad - bw, s.h - pad - bh, s.w - pad, s.h - pad };
+    int bw = s.btnW, bh = DpiPx(s.owner, 22);
+    int gap = DpiPx(s.owner, 6), pad = DpiPx(s.owner, 10);
+    int left = (s.w - (bw * 2 + gap)) / 2 + bw + gap; // 居中按钮组的右按钮（确认）
+    int top = s.h - pad - bh;
+    return RECT{ left, top, left + bw, top + bh };
 }
 
 RECT ConfirmCancelRect(const ConfirmState& s) {
     RECT ok = ConfirmOkRect(s);
-    int bw = ok.right - ok.left, gap = DpiPx(s.owner, 8);
+    int bw = ok.right - ok.left, gap = DpiPx(s.owner, 6);
     return RECT{ ok.left - gap - bw, ok.top, ok.left - gap, ok.bottom };
 }
 
@@ -206,7 +211,7 @@ void DrawButton(HDC dc, HWND owner, const RECT& r, const std::wstring& label,
     if (!primary && hover) fill = BlendColor(Theme::kHover, Theme::kPaper, pressed ? 0.10f : 0.05f);
     FillRound(dc, r, radius, fill);
     StrokeRound(dc, r, radius, primary ? Theme::kDanger : Theme::kPaperEdge);
-    HFONT font = CreateUiFont(owner, 12.0f, primary);
+    HFONT font = CreateUiFont(owner, 10.0f, primary);
     RECT tr = r;
     DrawTextInRect(dc, label, tr, font, primary ? 0xFFFFFF : Theme::kText,
                    DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -232,28 +237,34 @@ LRESULT CALLBACK ConfirmProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         FillRound(dc, rc, DpiPx(s->owner, 16), Theme::kPaper);
         StrokeRound(dc, RECT{ 0, 0, rc.right, rc.bottom }, DpiPx(s->owner, 16), Theme::kPaperEdge);
 
-        int pad = DpiPx(s->owner, 20);
-        int icon = DpiPx(s->owner, 30);
+        int padX = DpiPx(s->owner, 12);
+        int padTop = DpiPx(s->owner, 12);
+        int icon = DpiPx(s->owner, 12);
+        int iconGap = DpiPx(s->owner, 8);
         uint32_t accent = s->danger ? Theme::kDanger : Theme::kCheckFill;
-        RECT iconRect{ pad, DpiPx(s->owner, 38), pad + icon, DpiPx(s->owner, 38) + icon };
+
+        int rowH = s->msgH > icon ? s->msgH : icon;
+        int blockW = icon + iconGap + s->msgW;
+        int blockLeft = (rc.right - blockW) / 2;
+        if (blockLeft < padX) blockLeft = padX;
+
+        int iconTop = padTop + (rowH - icon) / 2;
+        RECT iconRect{ blockLeft, iconTop, blockLeft + icon, iconTop + icon };
         FillRound(dc, iconRect, icon, BlendColor(accent, Theme::kPaper, 0.12f));
         StrokeRound(dc, iconRect, icon, accent);
-        HFONT titleFont = CreateUiFont(s->owner, 13.0f, true);
-        HFONT textFont = CreateUiFont(s->owner, 13.0f, false);
-        HFONT iconFont = CreateUiFont(s->owner, 15.0f, true);
+        HFONT iconFont = CreateUiFont(s->owner, 7.0f, true);
         RECT ir = iconRect;
         DrawTextInRect(dc, L"!", ir, iconFont, accent,
                        DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        RECT title{ pad + icon + DpiPx(s->owner, 12), DpiPx(s->owner, 26),
-                    rc.right - pad, DpiPx(s->owner, 48) };
-        DrawTextInRect(dc, L"X-TODO", title, titleFont, Theme::kText,
-                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        RECT msgRect{ title.left, DpiPx(s->owner, 52), rc.right - pad, DpiPx(s->owner, 112) };
-        DrawTextInRect(dc, s->message, msgRect, textFont, Theme::kText,
-                       DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
         DeleteObject(iconFont);
+
+        HFONT textFont = CreateUiFont(s->owner, 11.0f, false);
+        int msgLeft = blockLeft + icon + iconGap;
+        int msgTop = padTop + (rowH - s->msgH) / 2;
+        RECT msgRect{ msgLeft, msgTop, msgLeft + s->msgW, msgTop + s->msgH };
+        DrawTextInRect(dc, s->message, msgRect, textFont, Theme::kText,
+                       DT_CENTER | DT_TOP | DT_WORDBREAK);
         DeleteObject(textFont);
-        DeleteObject(titleFont);
 
         RECT cancel = ConfirmCancelRect(*s);
         RECT ok = ConfirmOkRect(*s);
@@ -301,6 +312,53 @@ LRESULT CALLBACK ConfirmProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+void MeasureConfirm(ConfirmState& s) {
+    int padX    = DpiPx(s.owner, 12);
+    int icon    = DpiPx(s.owner, 12);
+    int iconGap = DpiPx(s.owner, 8);
+    int avail   = s.w - padX * 2 - icon - iconGap;
+    int minAvail = DpiPx(s.owner, 40);
+    if (avail < minAvail) avail = minAvail;
+
+    HDC dc = GetDC(s.owner);
+
+    HFONT textFont = CreateUiFont(s.owner, 11.0f, false);
+    HGDIOBJ prev = SelectObject(dc, textFont);
+    RECT mr{ 0, 0, avail, 0 };
+    DrawTextW(dc, s.message.c_str(), (int)s.message.size(), &mr,
+              DT_CALCRECT | DT_WORDBREAK);
+    s.msgW = mr.right - mr.left;
+    s.msgH = mr.bottom - mr.top;
+    SelectObject(dc, prev);
+    DeleteObject(textFont);
+
+    HFONT btnFont = CreateUiFont(s.owner, 10.0f, true);
+    prev = SelectObject(dc, btnFont);
+    int btnW = DpiPx(s.owner, 50);
+    const wchar_t* labels[2] = { T(Str::ConfirmOk, s.lang), T(Str::ConfirmCancel, s.lang) };
+    for (const wchar_t* txt : labels) {
+        SIZE sz{};
+        GetTextExtentPoint32W(dc, txt, (int)wcslen(txt), &sz);
+        int need = sz.cx + DpiPx(s.owner, 22);
+        if (need > btnW) btnW = need;
+    }
+    s.btnW = btnW;
+    SelectObject(dc, prev);
+    DeleteObject(btnFont);
+
+    ReleaseDC(s.owner, dc);
+}
+
+int ConfirmHeight(const ConfirmState& s) {
+    int padTop    = DpiPx(s.owner, 12);
+    int padBottom = DpiPx(s.owner, 10);
+    int icon      = DpiPx(s.owner, 12);
+    int msgBtnGap = DpiPx(s.owner, 10);
+    int btnH      = DpiPx(s.owner, 22);
+    int rowH = s.msgH > icon ? s.msgH : icon;
+    return padTop + rowH + msgBtnGap + btnH + padBottom;
+}
+
 bool ShowThemedConfirm(HWND owner, const wchar_t* text, Lang lang, bool danger) {
     const wchar_t* cls = L"XTodoConfirmPopup";
     if (!RegisterPopupClass(cls, ConfirmProc)) return false;
@@ -309,9 +367,10 @@ bool ShowThemedConfirm(HWND owner, const wchar_t* text, Lang lang, bool danger) 
     state.message = text ? text : L"";
     state.lang = lang;
     state.danger = danger;
-    state.w = ClampPopupWidthToOwner(owner, DpiPx(owner, 300),
-                                     DpiPx(owner, 220), DpiPx(owner, 300));
-    state.h = DpiPx(owner, 168);
+    state.w = ClampPopupWidthToOwner(owner, DpiPx(owner, 172),
+                                     DpiPx(owner, 150), DpiPx(owner, 172));
+    MeasureConfirm(state);
+    state.h = ConfirmHeight(state);
 
     HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, cls, L"",
                                 WS_POPUP, 0, 0, state.w, state.h,
@@ -363,7 +422,7 @@ struct PopupMenuState {
 
 int MenuItemAt(const PopupMenuState& s, int y) {
     if (!s.items) return -1;
-    int top = DpiPx(s.owner, 6);
+    int top = DpiPx(s.owner, 4);
     for (size_t i = 0; i < s.items->size(); ++i) {
         const PopupMenuItem& item = (*s.items)[i];
         int h = item.separator ? s.sepH : s.rowH;
@@ -395,27 +454,27 @@ void DrawCheckMark(HDC dc, const RECT& box, uint32_t color) {
 
 int MeasurePopupMenuWidth(HWND owner, const std::vector<PopupMenuItem>& items) {
     HDC dc = GetDC(owner);
-    HFONT font = CreateUiFont(owner, 13.0f);
+    HFONT font = CreateUiFont(owner, 10.0f);
     HGDIOBJ oldFont = SelectObject(dc, font);
     int maxText = 0;
     for (const auto& item : items) {
         if (item.separator) continue;
         SIZE sz{};
         GetTextExtentPoint32W(dc, item.text.c_str(), (int)item.text.size(), &sz);
-        int textW = sz.cx + DpiPx(owner, 50 + item.indent * 14);
+        int textW = sz.cx + DpiPx(owner, 44 + item.indent * 12);
         if (textW > maxText) maxText = textW;
     }
     SelectObject(dc, oldFont);
     DeleteObject(font);
     ReleaseDC(owner, dc);
-    int minW = DpiPx(owner, 112);
+    int minW = DpiPx(owner, 92);
     int preferred = maxText + DpiPx(owner, 4);
     return ClampPopupWidthToOwner(owner, preferred, minW, DpiPx(owner, 220));
 }
 
 int MeasurePopupMenuHeight(HWND owner, const std::vector<PopupMenuItem>& items) {
-    int rowH = DpiPx(owner, 26), sepH = DpiPx(owner, 7);
-    int h = DpiPx(owner, 12);
+    int rowH = DpiPx(owner, 20), sepH = DpiPx(owner, 5);
+    int h = DpiPx(owner, 8);
     for (const auto& item : items) h += item.separator ? sepH : rowH;
     return h;
 }
@@ -438,8 +497,8 @@ LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         RECT rc{}; GetClientRect(hwnd, &rc);
         FillRound(dc, rc, DpiPx(s->owner, 12), Theme::kPaper);
         StrokeRound(dc, RECT{ 0, 0, rc.right, rc.bottom }, DpiPx(s->owner, 12), Theme::kPaperEdge);
-        HFONT font = CreateUiFont(s->owner, 13.0f);
-        int y = DpiPx(s->owner, 6);
+        HFONT font = CreateUiFont(s->owner, 10.0f);
+        int y = DpiPx(s->owner, 4);
         int pad = DpiPx(s->owner, 10);
         for (size_t i = 0; i < s->items->size(); ++i) {
             const PopupMenuItem& item = (*s->items)[i];
@@ -458,11 +517,11 @@ LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if ((int)i == s->hover)
                 FillRound(dc, row, DpiPx(s->owner, 8), BlendColor(Theme::kHover, Theme::kPaper, 0.06f));
             if (item.checked) {
-                RECT ck{ row.left + DpiPx(s->owner, 8), row.top + DpiPx(s->owner, 7),
-                         row.left + DpiPx(s->owner, 20), row.top + DpiPx(s->owner, 19) };
+                RECT ck{ row.left + DpiPx(s->owner, 6), row.top + DpiPx(s->owner, 4),
+                         row.left + DpiPx(s->owner, 18), row.top + DpiPx(s->owner, 16) };
                 DrawCheckMark(dc, ck, Theme::kCheckFill);
             }
-            RECT textR{ row.left + DpiPx(s->owner, 28 + item.indent * 14), row.top,
+            RECT textR{ row.left + DpiPx(s->owner, 22 + item.indent * 12), row.top,
                         row.right - DpiPx(s->owner, 8), row.bottom };
             uint32_t textColor = item.enabled ? (item.danger ? Theme::kDanger : Theme::kText) : Theme::kTextWeak;
             DrawTextInRect(dc, item.text, textR, font, textColor,
@@ -525,8 +584,8 @@ UINT ShowPopupMenu(HWND owner, POINT pt, const std::vector<PopupMenuItem>& items
     PopupMenuState state{};
     state.owner = owner;
     state.items = &items;
-    state.rowH = DpiPx(owner, 26);
-    state.sepH = DpiPx(owner, 7);
+    state.rowH = DpiPx(owner, 20);
+    state.sepH = DpiPx(owner, 5);
     state.w = MeasurePopupMenuWidth(owner, items);
     state.h = MeasurePopupMenuHeight(owner, items);
 

@@ -40,7 +40,7 @@ constexpr float kCheckSize  = 18.0f; // 复选框边长
 constexpr float kFontSize   = 14.0f; // 正文字号
 constexpr float kSmallFont  = 12.0f; // 小字号
 constexpr float kResizeEdge = 6.0f;  // 缩放命中边缘宽度
-constexpr float kFooterH    = 32.0f; // 底部"新增"区高度
+constexpr float kFooterH    = 0.0f;  // 固定底栏高度；新增入口已移入内容区加号行
 constexpr float kSectionH   = 26.0f; // 已完成折叠条高度
 
 // 胶囊折叠态尺寸与半透明（仅 Capsule 形态使用）

@@ -15,6 +15,10 @@
 
 namespace {
 constexpr int kAppIconResourceId = 1; // resources/resource.rc embeds app.ico with ID 1.
+constexpr int kDefaultWindowW = 260;
+constexpr int kDefaultWindowH = 340;
+constexpr int kMinWindowW = 220;
+constexpr int kMinWindowH = 160;
 
 template <class T> void SafeRelease(T** p) {
     if (*p) { (*p)->Release(); *p = nullptr; }
@@ -80,6 +84,19 @@ uint32_t BlendColor(uint32_t fg, uint32_t bg, float a) {
 int DpiPx(HWND owner, float v) {
     UINT dpi = owner ? GetDpiForWindow(owner) : 96;
     return (int)(v * (float)dpi / 96.0f + 0.5f);
+}
+
+int OwnerClientWidth(HWND owner) {
+    RECT rc{};
+    if (!owner || !GetClientRect(owner, &rc)) return 0;
+    return rc.right - rc.left;
+}
+
+int ClampPopupWidthToOwner(HWND owner, int preferred, int minW, int fallbackMaxW) {
+    int maxW = OwnerClientWidth(owner);
+    if (maxW <= 0) maxW = fallbackMaxW;
+    if (maxW < minW) maxW = minW;
+    return ClampInt(preferred, minW, maxW);
 }
 
 HFONT CreateUiFont(HWND owner, float size, bool bold = false) {
@@ -292,7 +309,8 @@ bool ShowThemedConfirm(HWND owner, const wchar_t* text, Lang lang, bool danger) 
     state.message = text ? text : L"";
     state.lang = lang;
     state.danger = danger;
-    state.w = DpiPx(owner, 340);
+    state.w = ClampPopupWidthToOwner(owner, DpiPx(owner, 300),
+                                     DpiPx(owner, 220), DpiPx(owner, 300));
     state.h = DpiPx(owner, 168);
 
     HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, cls, L"",
@@ -390,13 +408,13 @@ int MeasurePopupMenuWidth(HWND owner, const std::vector<PopupMenuItem>& items) {
     SelectObject(dc, oldFont);
     DeleteObject(font);
     ReleaseDC(owner, dc);
-    int minW = DpiPx(owner, 214);
-    int maxW = DpiPx(owner, 300);
-    return ClampInt(maxText, minW, maxW);
+    int minW = DpiPx(owner, 144);
+    int preferred = maxText + DpiPx(owner, 4);
+    return ClampPopupWidthToOwner(owner, preferred, minW, DpiPx(owner, 240));
 }
 
 int MeasurePopupMenuHeight(HWND owner, const std::vector<PopupMenuItem>& items) {
-    int rowH = DpiPx(owner, 30), sepH = DpiPx(owner, 9);
+    int rowH = DpiPx(owner, 28), sepH = DpiPx(owner, 8);
     int h = DpiPx(owner, 12);
     for (const auto& item : items) h += item.separator ? sepH : rowH;
     return h;
@@ -507,8 +525,8 @@ UINT ShowPopupMenu(HWND owner, POINT pt, const std::vector<PopupMenuItem>& items
     PopupMenuState state{};
     state.owner = owner;
     state.items = &items;
-    state.rowH = DpiPx(owner, 30);
-    state.sepH = DpiPx(owner, 9);
+    state.rowH = DpiPx(owner, 28);
+    state.sepH = DpiPx(owner, 8);
     state.w = MeasurePopupMenuWidth(owner, items);
     state.h = MeasurePopupMenuHeight(owner, items);
 
@@ -566,9 +584,10 @@ bool MainWindow::Create() {
     LoadResult loadResult = Store::Load(model_, geom_, ui_);
 
     // 校验持久化几何：尺寸合理且至少落在某个显示器上，否则回退默认位置（防离屏/零尺寸找不回）
-    int w = 300, h = 380;
+    int w = kDefaultWindowW, h = kDefaultWindowH;
     bool geomOk = false;
-    if (geom_.valid && geom_.w >= 220 && geom_.w <= 4000 && geom_.h >= 160 && geom_.h <= 4000) {
+    if (geom_.valid && geom_.w >= kMinWindowW && geom_.w <= 4000 &&
+        geom_.h >= kMinWindowH && geom_.h <= 4000) {
         RECT wr{ geom_.x, geom_.y, geom_.x + geom_.w, geom_.y + geom_.h };
         if (MonitorFromRect(&wr, MONITOR_DEFAULTTONULL) != nullptr) {
             w = geom_.w; h = geom_.h;
@@ -793,8 +812,8 @@ LRESULT MainWindow::WndProc(UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_GETMINMAXINFO: {
         auto mmi = reinterpret_cast<MINMAXINFO*>(lp);
-        mmi->ptMinTrackSize.x = (LONG)S(220);
-        mmi->ptMinTrackSize.y = (LONG)S(160);
+        mmi->ptMinTrackSize.x = (LONG)S(kMinWindowW);
+        mmi->ptMinTrackSize.y = (LONG)S(kMinWindowH);
         return 0;
     }
 
@@ -1028,10 +1047,12 @@ void MainWindow::ShowTitleMenu() {
         PopupMenuItem{ 3, T(Str::Exit, lang_), false, false, true }
     };
 
-    POINT pt{ (LONG)menuRect_.left, (LONG)menuRect_.bottom }; // 弹在菜单按钮下方
+    RECT rc{};
+    GetClientRect(hwnd_, &rc);
+    POINT pt{ rc.right - (LONG)S(6), (LONG)menuRect_.bottom }; // 贴近窗口右侧弹出
     ClientToScreen(hwnd_, &pt);
     menuOpen_ = true;
-    UINT cmd = ShowPopupMenu(hwnd_, pt, items, false);
+    UINT cmd = ShowPopupMenu(hwnd_, pt, items, true);
     menuOpen_ = false;                 // 必须在 HandleMenuCommand 前清，且无论返回值
     HandleMenuCommand(cmd);
     if (cmd != 3) MaybeCollapseCapsule(); // (R1-F001) 非退出：按真实光标位置补判（cmd==3 已 DestroyWindow）

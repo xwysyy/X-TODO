@@ -56,12 +56,13 @@ private:
         D2D1_RECT_F handle;
         mutable IDWriteTextLayout* strikeLayout = nullptr; // 完成项删除线布局，首帧创建后缓存
     };
-    enum class HitKind { None, Check, Text, Delete, Handle, Section, Clear, Footer, Pin, Close, Menu };
+    enum class HitKind { None, Check, Text, Delete, Handle, Section, Clear, Add, Pin, Close, Menu };
     struct Hit { HitKind kind = HitKind::None; int rowIndex = -1; int itemIndex = -1; };
 
     void  RebuildLayout();
     float ContentHeight() const;
     void  ClampScroll();
+    void  ScrollItemIntoView(int itemIndex);
     float ContentTop() const;     // 内容区顶部 y（物理像素）
     float ViewportHeight() const; // 可滚动视口高度（物理像素）
     Hit   HitTest(float x, float y);
@@ -71,7 +72,7 @@ private:
     void DrawCheckbox(const D2D1_RECT_F& box, bool checked);
     void DrawTitleBar();
     void DrawSection(); // 已完成折叠条（内容层，文档坐标）
-    void DrawFooter();  // 底部新增区（固定）
+    void DrawAddRow(bool hovered); // 未完成项后的新增入口（内容层）
     void FillRect(const D2D1_RECT_F& r, uint32_t rgb, float a = 1.0f);
     void StrokeRect(const D2D1_RECT_F& r, uint32_t rgb, float w, float a = 1.0f);
     void Text(const std::wstring& s, const D2D1_RECT_F& r, uint32_t rgb,
@@ -187,6 +188,7 @@ private:
     std::vector<RowLayout> rows_;
     float       scroll_       = 0.0f;
     float       contentH_     = 0.0f;
+    D2D1_RECT_F addRect_{};     // 新增入口（文档坐标，位于未完成项之后）
     D2D1_RECT_F sectionRect_{}; // 已完成折叠条（文档坐标）
     D2D1_RECT_F clearRect_{};   // 清空已完成（文档坐标）
     D2D1_RECT_F pinRect_{};     // 置顶按钮（固定）

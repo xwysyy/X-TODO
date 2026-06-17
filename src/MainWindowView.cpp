@@ -18,6 +18,7 @@ std::wstring Trim(const std::wstring& s) {
 }
 
 int RoundToInt(float v) { return (int)(v >= 0.0f ? v + 0.5f : v - 0.5f); }
+constexpr int kHoverAddRow = -2;
 
 // 段落居中时 DWrite 实际渲染的基线相对框顶的 y（用于让浮动 EDIT 的文字基线与渲染态对齐）
 float DWriteBaselineInBox(IDWriteFactory* dwrite, IDWriteTextFormat* format,
@@ -56,6 +57,18 @@ void MainWindow::ClampScroll() {
     if (scroll_ > maxScroll) scroll_ = maxScroll;
 }
 
+void MainWindow::ScrollItemIntoView(int itemIndex) {
+    for (const RowLayout& r : rows_) {
+        if (r.itemIndex != itemIndex) continue;
+        float viewH = ViewportHeight();
+        if (r.row.top < scroll_) scroll_ = r.row.top;
+        else if (r.row.bottom > scroll_ + viewH) scroll_ = r.row.bottom - viewH;
+        ClampScroll();
+        return;
+    }
+    ClampScroll();
+}
+
 void MainWindow::RebuildLayout() {
     for (auto& r : rows_) // 释放上一轮缓存的删除线布局，避免泄漏
         if (r.strikeLayout) { r.strikeLayout->Release(); r.strikeLayout = nullptr; }
@@ -92,6 +105,9 @@ void MainWindow::RebuildLayout() {
 
     for (int i = 0; i < active; i++) makeRow(i, false);
 
+    addRect_ = D2D1::RectF(pad, docY, W - pad, docY + rowH);
+    docY += rowH;
+
     if (total - active > 0) {
         sectionRect_ = D2D1::RectF(pad, docY, W - pad, docY + S(Theme::kSectionH));
         clearRect_   = D2D1::RectF(W - pad - S(44), docY, W - pad, docY + S(Theme::kSectionH));
@@ -126,13 +142,13 @@ MainWindow::Hit MainWindow::HitTest(float x, float y) {
         return h; // 标题栏空白 -> 交给 NCHITTEST 拖动
     }
 
-    RECT rc;
-    GetClientRect(hwnd_, &rc);
-    float H = (float)(rc.bottom - rc.top);
-    if (y >= H - S(Theme::kFooterH)) { h.kind = HitKind::Footer; return h; }
-
     float docY = y - ContentTop() + scroll_;
     D2D1_POINT_2F dp{ x, docY };
+
+    if (addRect_.bottom > addRect_.top && InRect(addRect_, dp)) {
+        h.kind = HitKind::Add;
+        return h;
+    }
 
     if (sectionRect_.bottom > sectionRect_.top &&
         docY >= sectionRect_.top && docY < sectionRect_.bottom) {
@@ -288,17 +304,17 @@ void MainWindow::DrawTitleBar() {
     rt_->DrawLine(D2D1::Point2F(c.right - p, c.top + p), D2D1::Point2F(c.left + p, c.bottom - p), brush_, S(1.6f));
 }
 
-void MainWindow::DrawFooter() {
-    RECT rc;
-    GetClientRect(hwnd_, &rc);
-    float W = (float)(rc.right - rc.left), H = (float)(rc.bottom - rc.top);
-    float top = H - S(Theme::kFooterH);
+void MainWindow::DrawAddRow(bool hovered) {
+    if (addRect_.bottom <= addRect_.top) return;
+    if (hovered) FillRect(addRect_, Theme::kHover, 0.04f);
 
-    brush_->SetColor(Theme::Color(Theme::kDivider));
-    rt_->DrawLine(D2D1::Point2F(0, top), D2D1::Point2F(W, top), brush_, S(1));
-
-    D2D1_RECT_F tr = D2D1::RectF(S(Theme::kPadX), top, W - S(Theme::kPadX), H);
-    Text(T(Str::NewItem, lang_), tr, Theme::kTextWeak, smallFormat_);
+    const float size = S(Theme::kCheckSize);
+    const float cx = addRect_.left + size / 2.0f;
+    const float cy = (addRect_.top + addRect_.bottom) / 2.0f;
+    const float half = S(5);
+    brush_->SetColor(Theme::Color(hovered ? Theme::kCheckFill : Theme::kHandle));
+    rt_->DrawLine(D2D1::Point2F(cx - half, cy), D2D1::Point2F(cx + half, cy), brush_, S(1.8f));
+    rt_->DrawLine(D2D1::Point2F(cx, cy - half), D2D1::Point2F(cx, cy + half), brush_, S(1.8f));
 }
 
 bool MainWindow::Render() {
@@ -348,6 +364,7 @@ bool MainWindow::Render() {
 
     for (size_t i = 0; i < rows_.size(); i++)
         DrawRow(rows_[i], (int)i == hoverRow_);
+    DrawAddRow(hoverRow_ == kHoverAddRow);
     DrawSection();
 
     if (dragging_ && dragInsert_ >= 0) {
@@ -362,7 +379,6 @@ bool MainWindow::Render() {
 
     // 固定层
     DrawTitleBar();
-    DrawFooter();
     StrokeRect(D2D1::RectF(0.5f, 0.5f, W - 0.5f, H - 0.5f), Theme::kPaperEdge, 1.0f);
 
     if (rt_->EndDraw() == (HRESULT)D2DERR_RECREATE_TARGET) {
@@ -429,11 +445,10 @@ void MainWindow::OnLButtonUp(float x, float y) {
     case HitKind::Menu:    ShowTitleMenu();           break;
     case HitKind::Pin:     TogglePin();               break;
     case HitKind::Close:   HideToTray();              break;
-    case HitKind::Footer: {
+    case HitKind::Add: {
         int n = model_.AddActive(L"");
         RebuildLayout();
-        scroll_ = contentH_;
-        ClampScroll();
+        ScrollItemIntoView(n);
         BeginEdit(n);
         break;
     }
@@ -459,8 +474,9 @@ void MainWindow::OnMouseMove(float x, float y, bool lButton) {
         return;
     }
     Hit h = HitTest(x, y);
-    if (h.rowIndex != hoverRow_) {
-        hoverRow_ = h.rowIndex;
+    int hover = (h.kind == HitKind::Add) ? kHoverAddRow : h.rowIndex;
+    if (hover != hoverRow_) {
+        hoverRow_ = hover;
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
 }
@@ -559,8 +575,7 @@ void MainWindow::CommitEdit(bool addNext) {
     if (addNext && !text.empty()) {
         int n = model_.AddActive(L"");
         RebuildLayout();
-        scroll_ = contentH_;
-        ClampScroll();
+        ScrollItemIntoView(n);
         BeginEdit(n);
     } else {
         ClampScroll();

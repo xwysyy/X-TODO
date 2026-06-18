@@ -736,9 +736,10 @@ LRESULT MainWindow::WndProc(UINT msg, WPARAM wp, LPARAM lp) {
             bool mainWasHidden = !IsWindowVisible(hwnd_);
             DestroyTaskbarBand();
             TaskbarLayoutResult r = EnsureTaskbarBand();
-            if (r == TaskbarLayoutResult::Ok) {
+            if (r == TaskbarLayoutResult::Ok && IsTaskbarBandReady()) {
                 if (mainWasHidden) ShowWindow(hwnd_, SW_HIDE);
             } else {
+                TraceTaskbarBand(L"taskbar-created-not-ready");
                 if (mainWasHidden) ShowWindow(hwnd_, SW_SHOW);
                 ScheduleTaskbarRetry(mainWasHidden);
             }
@@ -771,9 +772,10 @@ LRESULT MainWindow::WndProc(UINT msg, WPARAM wp, LPARAM lp) {
             bool mainWasHidden = !IsWindowVisible(hwnd_);
             DestroyTaskbarBand();
             TaskbarLayoutResult r = EnsureTaskbarBand();
-            if (r == TaskbarLayoutResult::Ok) {
+            if (r == TaskbarLayoutResult::Ok && IsTaskbarBandReady()) {
                 if (mainWasHidden) ShowWindow(hwnd_, SW_HIDE);
             } else {
+                TraceTaskbarBand(L"display-change-not-ready");
                 if (mainWasHidden) ShowWindow(hwnd_, SW_SHOW);
                 ScheduleTaskbarRetry(mainWasHidden);
             }
@@ -788,9 +790,10 @@ LRESULT MainWindow::WndProc(UINT msg, WPARAM wp, LPARAM lp) {
         if (mountMode_ == MountMode::Taskbar) {
             bool mainWasHidden = !IsWindowVisible(hwnd_);
             TaskbarLayoutResult r = EnsureTaskbarBand();
-            if (r == TaskbarLayoutResult::Ok) {
+            if (r == TaskbarLayoutResult::Ok && IsTaskbarBandReady()) {
                 if (mainWasHidden) ShowWindow(hwnd_, SW_HIDE);
             } else {
+                TraceTaskbarBand(L"setting-change-not-ready");
                 if (mainWasHidden) ShowWindow(hwnd_, SW_SHOW);
                 ScheduleTaskbarRetry(mainWasHidden);
             }
@@ -819,8 +822,8 @@ LRESULT MainWindow::WndProc(UINT msg, WPARAM wp, LPARAM lp) {
         dpi_ = HIWORD(wp);
         if (mountMode_ == MountMode::Taskbar && !IsWindowVisible(hwnd_)) {
             TaskbarLayoutResult r = EnsureTaskbarBand();
-            if (r == TaskbarLayoutResult::Ok) ShowWindow(hwnd_, SW_HIDE);
-            else { ShowWindow(hwnd_, SW_SHOW); ScheduleTaskbarRetry(true); }
+            if (r == TaskbarLayoutResult::Ok && IsTaskbarBandReady()) ShowWindow(hwnd_, SW_HIDE);
+            else { TraceTaskbarBand(L"dpi-change-not-ready"); ShowWindow(hwnd_, SW_SHOW); ScheduleTaskbarRetry(true); }
             return 0;
         }
         RECT target{};
@@ -943,7 +946,7 @@ LRESULT MainWindow::WndProc(UINT msg, WPARAM wp, LPARAM lp) {
             KillTimer(hwnd_, kTaskbarRetryTimerId);
             if (mountMode_ == MountMode::Taskbar) {
                 TaskbarLayoutResult r = EnsureTaskbarBand();
-                if (r == TaskbarLayoutResult::Ok) {
+                if (r == TaskbarLayoutResult::Ok && IsTaskbarBandReady()) {
                     taskbarRetryCount_ = 0; // 成功（含 transient 已自排重试）：清失败计数
                     if (taskbarRetryHideMain_) ShowWindow(hwnd_, SW_HIDE);
                     taskbarRetryHideMain_ = false;
@@ -959,14 +962,24 @@ LRESULT MainWindow::WndProc(UINT msg, WPARAM wp, LPARAM lp) {
                 }
             }
         } else if (wp == kTaskbarRefreshTimerId) {
-            if (mountMode_ == MountMode::Taskbar && taskbarHwnd_ && IsWindow(taskbarHwnd_)) {
-                TaskbarLayoutResult r = LayoutTaskbarBand();
-                if (r == TaskbarLayoutResult::Ok) {
+            if (mountMode_ == MountMode::Taskbar) {
+                bool mainWasHidden = !IsWindowVisible(hwnd_);
+                TaskbarLayoutResult r = EnsureTaskbarBand();
+                if (r == TaskbarLayoutResult::Ok && IsTaskbarBandReady()) {
+                    if (mainWasHidden) ShowWindow(hwnd_, SW_HIDE);
                     InvalidateTaskbarBand();
+                } else if (r == TaskbarLayoutResult::TransientUnavailable) {
+                    TraceTaskbarBand(L"refresh-transient");
+                    if (mainWasHidden) ShowWindow(hwnd_, SW_SHOW);
+                    ScheduleTaskbarRetry(mainWasHidden);
                 } else if (r == TaskbarLayoutResult::Fatal) {
-                    bool mainWasHidden = !IsWindowVisible(hwnd_);
+                    TraceTaskbarBand(L"refresh-fatal");
                     DestroyTaskbarBand();
                     ShowWindow(hwnd_, SW_SHOW);
+                    ScheduleTaskbarRetry(mainWasHidden);
+                } else {
+                    TraceTaskbarBand(L"refresh-not-ready");
+                    if (mainWasHidden) ShowWindow(hwnd_, SW_SHOW);
                     ScheduleTaskbarRetry(mainWasHidden);
                 }
             } else {
@@ -1217,7 +1230,7 @@ void MainWindow::ApplyMountMode() {
 
     if (mountMode_ == MountMode::Taskbar) {
         TaskbarLayoutResult r = EnsureTaskbarBand();
-        if (r == TaskbarLayoutResult::Ok) {
+        if (r == TaskbarLayoutResult::Ok && IsTaskbarBandReady()) {
             ShowWindow(hwnd_, SW_HIDE);
             return;
         }

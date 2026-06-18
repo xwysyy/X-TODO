@@ -124,6 +124,9 @@ private:
     void        ClampTaskbarPreviewIndex();
     void        OnModelOrUiChangedForTaskbarBand();
     void        ScheduleTaskbarRetry(bool hideMainOnOk = false);
+    bool        IsTaskbarBandAttached() const;
+    bool        IsTaskbarBandReady() const;
+    void        TraceTaskbarBand(const wchar_t* tag) const;
     void        SetCapsuleStyle(CapsuleStyle s);
     void        StartCapsuleAnim(bool expand);
     void        OnAnimTick();

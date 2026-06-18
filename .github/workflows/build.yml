@@ -29,32 +29,11 @@ jobs:
       - name: Build (MinSizeRel)
         run: cmake --build build --config MinSizeRel
 
-      - name: Generate size badge endpoint
-        shell: pwsh
-        run: |
-          $exe = "build/MinSizeRel/x-todo.exe"
-          $size = (Get-Item $exe).Length
-          $culture = [System.Globalization.CultureInfo]::InvariantCulture
-          if ($size -ge 1MB) {
-            $message = [string]::Format($culture, "{0:0.#} MiB", $size / 1MB)
-          } else {
-            $message = [string]::Format($culture, "{0:0.#} KiB", $size / 1KB)
-          }
-          $badge = [ordered]@{
-            schemaVersion = 1
-            label = "exe"
-            message = $message
-            color = "2EA043"
-          }
-          $badge | ConvertTo-Json -Compress | Set-Content -NoNewline -Encoding utf8 "build/MinSizeRel/size-badge.json"
-
       - name: Upload exe
         uses: actions/upload-artifact@v7
         with:
           name: x-todo
-          path: |
-            build/MinSizeRel/x-todo.exe
-            build/MinSizeRel/size-badge.json
+          path: build/MinSizeRel/x-todo.exe
           if-no-files-found: error
 
   release:
@@ -74,6 +53,21 @@ jobs:
         with:
           name: x-todo
           path: dist
+
+      - name: Generate size badge endpoint
+        run: |
+          python3 - <<'PY'
+          import json, os
+          size = os.path.getsize("dist/x-todo.exe")
+          if size >= 1024 * 1024:
+              n, unit = size / (1024 * 1024), "MiB"
+          else:
+              n, unit = size / 1024, "KiB"
+          msg = f"{n:.1f}".removesuffix(".0")
+          badge = {"schemaVersion": 1, "label": "exe", "message": f"{msg} {unit}", "color": "2EA043"}
+          with open("dist/size-badge.json", "w", encoding="utf-8") as f:
+              json.dump(badge, f, separators=(",", ":"))
+          PY
 
       - name: Publish GitHub Release
         run: |

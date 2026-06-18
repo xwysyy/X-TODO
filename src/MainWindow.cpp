@@ -533,6 +533,7 @@ LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_MOUSEMOVE: {
+        SetCursor(LoadCursorW(nullptr, IDC_ARROW)); // capture 下系统不发 WM_SETCURSOR，须手动保持箭头
         int h = MenuItemAt(*s, GET_Y_LPARAM(lp));
         if (h != s->hover) { s->hover = h; InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
@@ -606,6 +607,7 @@ UINT ShowPopupMenu(HWND owner, POINT pt, const std::vector<PopupMenuItem>& items
     SetForegroundWindow(hwnd);
     SetFocus(hwnd);
     SetCapture(hwnd);
+    SetCursor(LoadCursorW(nullptr, IDC_ARROW)); // 持有 capture 期间系统不自动管光标，立即设回箭头（防 resize 光标残留）
 
     MSG msg{};
     BOOL got = TRUE;

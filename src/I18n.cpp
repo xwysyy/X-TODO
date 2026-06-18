@@ -23,9 +23,6 @@ const wchar_t* T(Str key, Lang lang) {
         case Str::ConfirmCancel: return zh ? L"取消"            : L"Cancel";
         case Str::LoadFailedMsg: return zh ? L"读取待办数据失败，原文件已备份为 data.txt.corrupt.bak，本次以空白开始。"
                                            : L"Could not read your data. The original was backed up as data.txt.corrupt.bak; starting empty.";
-        case Str::ModeTaskbar:        return zh ? L"嵌入任务栏"     : L"Taskbar embed";
-        case Str::TaskbarEmbedFailed: return zh ? L"任务栏嵌入失败" : L"Taskbar embed failed";
-        case Str::TaskbarAllDone:     return zh ? L"都完成了"       : L"All done";
     }
     return L"";
 }

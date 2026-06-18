@@ -25,19 +25,6 @@ std::string WideToUtf8(const std::wstring& w) {
     return s;
 }
 
-bool IsTaskbarStrategy(const std::wstring& v) {
-    return v == L"popup_shell_noowner" ||
-           v == L"popup_shell_owner" ||
-           v == L"child_shell_setparent" ||
-           v == L"create_child_shell" ||
-           v == L"popup_traynotify" ||
-           v == L"child_traynotify" ||
-           v == L"popup_taskhost" ||
-           v == L"topmost_overlay" ||
-           v == L"appbar_edge" ||
-           v == L"trafficmonitor_layered_shell";
-}
-
 // 把换行 / 制表 / 反斜杠转义，保证一条目占一行
 std::wstring Escape(const std::wstring& in) {
     std::wstring out;
@@ -186,8 +173,10 @@ LoadResult Store::Load(TodoModel& model, WindowGeometry& geom, UiState& ui) {
             if (mp != std::wstring::npos) {
                 std::wstring v = line.substr(mp + 6);
                 while (!v.empty() && (v.back() == L' ' || v.back() == L'\r')) v.pop_back();
-                if (v == L"normal" || v == L"desktop" || v == L"capsule" || v == L"taskbar")
+                if (v == L"normal" || v == L"desktop" || v == L"capsule")
                     ui.mountMode = std::string(v.begin(), v.end());
+                else if (v == L"taskbar")
+                    ui.mountMode = "normal";
             }
             size_t lp = line.find(L"lang=");
             if (lp != std::wstring::npos) {
@@ -223,32 +212,6 @@ LoadResult Store::Load(TodoModel& model, WindowGeometry& geom, UiState& ui) {
                 std::wstring v = line.substr(cp + wcslen(L"capsule_monitor="));
                 while (!v.empty() && (v.back() == L' ' || v.back() == L'\r')) v.pop_back();
                 ui.capsuleMonitor = WideToUtf8(Unescape(v));
-            }
-            size_t tm = line.find(L"taskbar_monitor=");
-            if (tm != std::wstring::npos) {
-                std::wstring v = line.substr(tm + wcslen(L"taskbar_monitor="));
-                while (!v.empty() && (v.back() == L' ' || v.back() == L'\r')) v.pop_back();
-                ui.taskbarMonitor = WideToUtf8(Unescape(v));
-            }
-            size_t tdt = line.find(L"taskbar_dock_t=");
-            if (tdt != std::wstring::npos) {
-                std::wstring v = line.substr(tdt + wcslen(L"taskbar_dock_t="));
-                wchar_t* end = nullptr;
-                double d = wcstod(v.c_str(), &end);
-                if (end != v.c_str() && std::isfinite(d))
-                    ui.taskbarDockT = std::clamp(d, 0.0, 1.0);
-            }
-            size_t twd = line.find(L"taskbar_width=");
-            if (twd != std::wstring::npos) {
-                std::wstring v = line.substr(twd + wcslen(L"taskbar_width="));
-                ui.taskbarWidth = std::clamp((int)wcstol(v.c_str(), nullptr, 10), 160, 520);
-            }
-            size_t tst = line.find(L"taskbar_strategy=");
-            if (tst != std::wstring::npos) {
-                std::wstring v = line.substr(tst + wcslen(L"taskbar_strategy="));
-                while (!v.empty() && (v.back() == L' ' || v.back() == L'\r')) v.pop_back();
-                if (IsTaskbarStrategy(v))
-                    ui.taskbarStrategy = std::string(v.begin(), v.end());
             }
         }
     }
@@ -287,15 +250,6 @@ bool Store::Save(const TodoModel& model, const WindowGeometry& geom, const UiSta
     }
     if (!ui.capsuleMonitor.empty())
         text += L"ui capsule_monitor=" + Escape(Utf8ToWide(ui.capsuleMonitor)) + L"\n";
-    if (!ui.taskbarMonitor.empty())
-        text += L"ui taskbar_monitor=" + Escape(Utf8ToWide(ui.taskbarMonitor)) + L"\n";
-    {
-        wchar_t tb[64];
-        swprintf_s(tb, L"ui taskbar_dock_t=%.6f\n", ui.taskbarDockT);
-        text += tb;
-    }
-    text += L"ui taskbar_width=" + std::to_wstring(ui.taskbarWidth) + L"\n";
-    text += L"ui taskbar_strategy=" + std::wstring(ui.taskbarStrategy.begin(), ui.taskbarStrategy.end()) + L"\n";
     for (const auto& it : model.Items()) {
         text += L"item ";
         text += it.done ? L"1 " : L"0 ";

@@ -77,25 +77,22 @@ to fit one locale.
 
 ## Popup Menu
 
-### The three menus share one code path
+### The two menus share one code path
 
-The title-bar hamburger, the tray icon, and the taskbar band all open
-the same menu through one function. `ShowTitleMenu` (reached from
+The title-bar hamburger and the tray icon open the same menu through one
+function. `ShowTitleMenu` (reached from
 `HitKind::Menu` in `src/MainWindowView.cpp`) opens the title-bar menu and
 calls `ShowPopupMenu(hwnd_, pt, items, true)` with `alignRight = true`,
 so the menu's right edge sits against the window's right side (`pt.x -=
 state.w` inside `ShowPopupMenu`). `ShowTrayMenu` calls
-`ShowPopupMenu(hwnd_, pt, items, false)` at the cursor, and it serves
-both the tray icon (`WM_TRAY` with `WM_RBUTTONUP` in `MainWindow::WndProc`)
-and the taskbar band right-click (`WM_RBUTTONUP` in
-`src/MainWindowTaskbar.cpp`, which calls `ShowTrayMenu` directly).
+`ShowPopupMenu(hwnd_, pt, items, false)` at the cursor for the tray icon
+(`WM_TRAY` with `WM_RBUTTONUP` in `MainWindow::WndProc`).
 
 Rule: any change to sizing, hit-testing, painting, capture, or cursor in
-`ShowPopupMenu` / `PopupMenuProc` affects all three entry points. When
-changing menu behavior, check it from the hamburger, the tray icon, and
-the taskbar band (in normal, capsule, and taskbar mount modes), not just
-one. Per-menu differences (alignment, item list) belong in `ShowTitleMenu`
-/ `ShowTrayMenu`, not in the shared path.
+`ShowPopupMenu` / `PopupMenuProc` affects both entry points. When changing
+menu behavior, check it from the hamburger and the tray icon, not just one.
+Per-menu differences (alignment, item list) belong in `ShowTitleMenu` /
+`ShowTrayMenu`, not in the shared path.
 
 ### Keep menu hit-testing in lockstep with painting
 

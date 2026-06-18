@@ -70,31 +70,22 @@ Verification: with `kResizeEdge = 8` and button top at y = 5, click the
 top edge of the menu/pin/close buttons; the action must fire and the
 cursor must not switch to a resize arrow.
 
-### `kResizeEdge` is one global knob; the taskbar band is exempt
+### `kResizeEdge` is one global knob
 
 Symptom: confusion over what "the resize edge" affects. Tuning it once
-silently changes the grab feel of every full-window mode, while the
-taskbar status strip does not respond to it at all.
+silently changes the grab feel of every full-window mode.
 
 Root cause: `kResizeEdge` is consumed only by `OnNcHitTest`, and
 `OnNcHitTest` is the `WM_NCHITTEST` handler for the single main window
-across Normal, Desktop, Taskbar-flyout, and expanded Capsule modes.
-Those modes share one HWND, so one `kResizeEdge` value governs the grab
-feel everywhere at once. The taskbar status strip is a separate
-`WS_CHILD` window with its own window procedure (`src/MainWindowTaskbar.cpp`
-`MainWindow::TaskbarWndProc`, class registered in
-`RegisterTaskbarBandClass`). That procedure has no `WM_NCHITTEST` case
-and never reads `kResizeEdge`, so it does not go through `OnNcHitTest` and
-is unaffected by the edge width.
+across Normal, Desktop, and expanded Capsule modes. Those modes share one
+HWND, so one `kResizeEdge` value governs the grab feel everywhere at once.
 
 Fix: treat `kResizeEdge` (`src/Theme.h`) as a single global resize-feel
 knob for the main-window hit-test path. Do not add a separate per-mode
-override, and do not expect changes to it to alter the taskbar band.
-Commit `2aafdbd`.
+override. Commit `2aafdbd`.
 
 Rule: `kResizeEdge` changes the grab feel of all main-window modes
-simultaneously; the taskbar band is a distinct child window outside this
-path.
+simultaneously.
 
 ## Geometry Persistence
 

@@ -1,14 +1,12 @@
-# Capsule & Taskbar Gotchas
+# Capsule Gotchas
 
-Hard constraints in X-TODO's side-capsule and taskbar mount modes,
-discovered through specific bugs. Each rule below regressed at least once.
+Hard constraints in X-TODO's side-capsule mount mode, discovered through
+specific bugs. Each rule below regressed at least once.
 
-The note has four mount modes (`MountMode` in `src/MainWindow.h`): Normal,
-Desktop, Capsule, and Taskbar. Capsule docks a collapsed pill to a screen
-edge and slides the full note out on click. Taskbar hides the main window
-and shows a compact band embedded in the Explorer taskbar. The two modes
-share almost no code, so a fix in one rarely covers the other, and both
-break in ways the default Win32 behavior would not warn about.
+The note has three mount modes (`MountMode` in `src/MainWindow.h`): Normal,
+Desktop, and Capsule. Capsule docks a collapsed pill to a screen edge and
+slides the full note out on click. It has separate shape, hit-test, animation,
+and persistence behavior from the normal window.
 
 ## Side Capsule
 
@@ -123,58 +121,3 @@ on `capsuleShrunk()` in `OnLButtonDown`. The expanded note uses the normal
 input path and persists its size through `CaptureVisibleGeometry` into
 `geom_`, consumed by `ExpandedTargetRect`. Do not route expanded-note clicks
 through `BeginCapsulePress`. `63e1937`
-
-## Taskbar Band
-
-### The taskbar band is a separate overlay, not a child of Explorer
-
-Symptom: a cross-process `WS_CHILD` under `Shell_TrayWnd` can be created
-successfully but still not appear on modern Windows taskbars. If the main
-window is then hidden, taskbar mode looks like it lost every visible entry.
-
-Root cause: the band is its own window and should not depend on Explorer's
-child z-order. `EnsureTaskbarBand` (`src/MainWindowTaskbar.cpp`) creates
-`taskbarHwnd_` as a no-activate topmost tool `WS_POPUP`; `taskbarParent_`
-keeps tracking `Shell_TrayWnd` or `Shell_SecondaryTrayWnd` only for monitor
-selection, blocker discovery, and coordinate conversion. `LayoutTaskbarBand`
-still stores `taskbarBandRect_` in taskbar client coordinates, then converts
-the origin with `ClientToScreen` before `SetWindowPos`. The main window
-`hwnd_` remains an independent top-level `WS_POPUP` and is hidden only after
-the band layout result is `TaskbarLayoutResult::Ok`.
-
-On an Explorer restart the band is recreated as a fresh overlay. The host
-window is recomputed each time `EnsureTaskbarBand` runs, and if
-`taskbarHwnd_` already exists for a different host
-(`taskbarParent_ != host`), `DestroyTaskbarBand` runs before a fresh
-`CreateWindowExW`. The same destroy-and-recreate path is driven by the
-`TaskbarCreated` message and by `WM_DISPLAYCHANGE` in `MainWindow::WndProc`.
-
-Rule: the band is a standalone no-activate topmost tool popup with its own
-class, proc, and `IDC_ARROW` cursor. It is positioned from Explorer taskbar
-geometry but is not parented to Explorer. Do not give the band `OnNcHitTest`,
-resize edges, or a resize cursor. Do not hide the main window unless
-`EnsureTaskbarBand` returns `TaskbarLayoutResult::Ok`.
-
-### `PaintTaskbarBand` must call the global `::FillRect`
-
-Symptom: the band's background fill in `PaintTaskbarBand` did not compile, or
-resolved to the wrong function, because the intended Win32 background fill
-was shadowed by a same-named member.
-
-Root cause: `MainWindow` declares its own member `void FillRect(const
-D2D1_RECT_F&, uint32_t, float)` (a Direct2D helper, defined in
-`src/MainWindowView.cpp`). `PaintTaskbarBand` is a `MainWindow` member, so
-inside it the unqualified name `FillRect` resolves to that member, not to the
-Win32 `FillRect(HDC, const RECT*, HBRUSH)`. The member has a completely
-different signature (Direct2D rect and color, no HDC), so the GDI call
-`FillRect(mem, &rc, bg)` did not match the intended global function.
-
-Fix (`16436d5`): qualify the call as `::FillRect(mem, &rc, bg)` in
-`PaintTaskbarBand` (`src/MainWindowTaskbar.cpp`) so it binds to the global
-Win32 GDI function. The one-line change is exactly `FillRect` to
-`::FillRect`.
-
-Rule: inside `MainWindow` member functions, any Win32 API that collides with
-a member name (`FillRect` is the known case) must be called with the `::`
-global qualifier. The band paints with GDI on an HDC, so it needs the global
-`::FillRect`, not the Direct2D member. `16436d5`

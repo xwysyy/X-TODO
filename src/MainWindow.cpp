@@ -407,52 +407,6 @@ struct PopupMenuItem {
     int indent = 0;
 };
 
-struct TaskbarStrategyMenuEntry {
-    UINT cmd;
-    const char* id;
-    const wchar_t* zh;
-    const wchar_t* en;
-};
-
-constexpr TaskbarStrategyMenuEntry kTaskbarStrategyMenu[] = {
-    { 130, "popup_shell_noowner",   L"TB1 popup shell no owner", L"TB1 popup shell no owner" },
-    { 131, "popup_shell_owner",     L"TB2 popup shell owner",    L"TB2 popup shell owner" },
-    { 132, "child_shell_setparent", L"TB3 child shell SetParent", L"TB3 child shell SetParent" },
-    { 133, "create_child_shell",    L"TB4 create child shell",   L"TB4 create child shell" },
-    { 134, "popup_traynotify",      L"TB5 popup TrayNotify",     L"TB5 popup TrayNotify" },
-    { 135, "child_traynotify",      L"TB6 child TrayNotify",     L"TB6 child TrayNotify" },
-    { 136, "popup_taskhost",        L"TB7 popup task host",      L"TB7 popup task host" },
-    { 137, "topmost_overlay",       L"TB8 topmost overlay",      L"TB8 topmost overlay" },
-    { 138, "appbar_edge",           L"TB9 appbar edge",          L"TB9 appbar edge" },
-    { 139, "trafficmonitor_layered_shell", L"TB10 TrafficMonitor layered shell", L"TB10 TrafficMonitor layered shell" }
-};
-
-const TaskbarStrategyMenuEntry* FindTaskbarStrategyCommand(UINT cmd) {
-    for (const auto& entry : kTaskbarStrategyMenu)
-        if (entry.cmd == cmd) return &entry;
-    return nullptr;
-}
-
-void AppendTaskbarStrategyItems(std::vector<PopupMenuItem>& items, Lang lang, const std::string& current) {
-    items.push_back(PopupMenuItem{
-        0,
-        lang == Lang::Zh ? L"任务栏方案" : L"Taskbar strategy",
-        false, false, false, false
-    });
-    for (const auto& entry : kTaskbarStrategyMenu) {
-        items.push_back(PopupMenuItem{
-            entry.cmd,
-            lang == Lang::Zh ? entry.zh : entry.en,
-            false,
-            current == entry.id,
-            false,
-            true,
-            1
-        });
-    }
-    items.push_back(PopupMenuItem{ 0, L"", true });
-}
-
 struct PopupMenuState {
     HWND hwnd = nullptr;
     HWND owner = nullptr;
@@ -728,7 +682,7 @@ bool MainWindow::Create() {
     int corner = 2; // DWMWCP_ROUND
     DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
 
-    taskbarCreatedMsg_ = RegisterWindowMessageW(L"TaskbarCreated");
+    explorerRestartMsg_ = RegisterWindowMessageW(L"TaskbarCreated");
     AddTrayIcon();
     lang_ = ui_.lang == "zh" ? Lang::Zh
           : ui_.lang == "en" ? Lang::En
@@ -736,7 +690,6 @@ bool MainWindow::Create() {
     capsuleStyle_ = ui_.capsuleStyle == "dot" ? CapsuleStyle::Dot : CapsuleStyle::Slim;
     mountMode_ = ui_.mountMode == "desktop" ? MountMode::Desktop
                : ui_.mountMode == "capsule" ? MountMode::Capsule
-               : ui_.mountMode == "taskbar" ? MountMode::Taskbar
                : MountMode::Normal;
     ApplyMountMode(); // 应用持久化形态（含置顶 / 布局）
 
@@ -746,7 +699,6 @@ bool MainWindow::Create() {
 }
 
 void MainWindow::Show(bool expandCapsule) {
-    if (mountMode_ == MountMode::Taskbar) { ShowFromTaskbarBand(); return; } // 任务栏模式：唤起完整窗口
     ShowWindow(hwnd_, SW_SHOW);
     if (expandCapsule && mountMode_ == MountMode::Capsule && !capsuleExpanded_ && !animActive_)
         StartCapsuleAnim(true); // 主动唤起（托盘 / 菜单 / 第二实例）时滑出
@@ -754,10 +706,6 @@ void MainWindow::Show(bool expandCapsule) {
 }
 
 void MainWindow::InitialShow() {
-    // 冷启动：任务栏模式且状态条已就绪时只留状态条；未就绪时显示完整窗口并继续重试。
-    if (mountMode_ == MountMode::Taskbar &&
-        taskbarHwnd_ && IsWindow(taskbarHwnd_) && IsWindowVisible(taskbarHwnd_))
-        return;
     Show(false);
 }
 
@@ -776,20 +724,8 @@ LRESULT CALLBACK MainWindow::WndProcStatic(HWND hwnd, UINT msg, WPARAM wp, LPARA
 }
 
 LRESULT MainWindow::WndProc(UINT msg, WPARAM wp, LPARAM lp) {
-    if (msg == taskbarCreatedMsg_ && taskbarCreatedMsg_ != 0) {
+    if (msg == explorerRestartMsg_ && explorerRestartMsg_ != 0) {
         AddTrayIcon(); // Explorer 重启后重新登记托盘图标
-        if (mountMode_ == MountMode::Taskbar) {
-            bool mainWasHidden = !IsWindowVisible(hwnd_);
-            DestroyTaskbarBand();
-            TaskbarLayoutResult r = EnsureTaskbarBand();
-            if (r == TaskbarLayoutResult::Ok && IsTaskbarBandReady()) {
-                if (mainWasHidden) ShowWindow(hwnd_, SW_HIDE);
-            } else {
-                TraceTaskbarBand(L"taskbar-created-not-ready");
-                if (mainWasHidden) ShowWindow(hwnd_, SW_SHOW);
-                ScheduleTaskbarRetry(mainWasHidden);
-            }
-        }
         return 0;
     }
     switch (msg) {
@@ -814,18 +750,6 @@ LRESULT MainWindow::WndProc(UINT msg, WPARAM wp, LPARAM lp) {
                          t.right - t.left, t.bottom - t.top, SWP_NOACTIVATE);
             UpdateLayeredState(); // 顺带刷新 alpha 与圆点区域
         }
-        if (mountMode_ == MountMode::Taskbar) {
-            bool mainWasHidden = !IsWindowVisible(hwnd_);
-            DestroyTaskbarBand();
-            TaskbarLayoutResult r = EnsureTaskbarBand();
-            if (r == TaskbarLayoutResult::Ok && IsTaskbarBandReady()) {
-                if (mainWasHidden) ShowWindow(hwnd_, SW_HIDE);
-            } else {
-                TraceTaskbarBand(L"display-change-not-ready");
-                if (mainWasHidden) ShowWindow(hwnd_, SW_SHOW);
-                ScheduleTaskbarRetry(mainWasHidden);
-            }
-        }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
 
@@ -833,17 +757,6 @@ LRESULT MainWindow::WndProc(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_THEMECHANGED:
     case WM_SYSCOLORCHANGE:
     case WM_DWMCOLORIZATIONCOLORCHANGED:
-        if (mountMode_ == MountMode::Taskbar) {
-            bool mainWasHidden = !IsWindowVisible(hwnd_);
-            TaskbarLayoutResult r = EnsureTaskbarBand();
-            if (r == TaskbarLayoutResult::Ok && IsTaskbarBandReady()) {
-                if (mainWasHidden) ShowWindow(hwnd_, SW_HIDE);
-            } else {
-                TraceTaskbarBand(L"setting-change-not-ready");
-                if (mainWasHidden) ShowWindow(hwnd_, SW_SHOW);
-                ScheduleTaskbarRetry(mainWasHidden);
-            }
-        }
         break; // 落到 DefWindowProc，保留系统默认处理
 
     case WM_SIZE:
@@ -866,12 +779,6 @@ LRESULT MainWindow::WndProc(UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_DPICHANGED: {
         dpi_ = HIWORD(wp);
-        if (mountMode_ == MountMode::Taskbar && !IsWindowVisible(hwnd_)) {
-            TaskbarLayoutResult r = EnsureTaskbarBand();
-            if (r == TaskbarLayoutResult::Ok && IsTaskbarBandReady()) ShowWindow(hwnd_, SW_HIDE);
-            else { TraceTaskbarBand(L"dpi-change-not-ready"); ShowWindow(hwnd_, SW_SHOW); ScheduleTaskbarRetry(true); }
-            return 0;
-        }
         RECT target{};
         if (mountMode_ == MountMode::Capsule && !capsuleDragging_) {
             target = capsuleExpanded_ ? ExpandedTargetRect() : CapsuleTargetRect();
@@ -987,42 +894,6 @@ LRESULT MainWindow::WndProc(UINT msg, WPARAM wp, LPARAM lp) {
                 bool lbtn = (GetKeyState(VK_LBUTTON) & 0x8000) != 0;
                 if (lbtn) SetTimer(hwnd_, kCollapseTimerId, kCollapseDelayMs, nullptr); // 拖动/缩放中：顺延再判
                 else if (!PtInRect(&wr, cur)) StartCapsuleAnim(false); // 仍在窗口外才收回
-            }
-        } else if (wp == kTaskbarRetryTimerId) {
-            KillTimer(hwnd_, kTaskbarRetryTimerId);
-            if (mountMode_ == MountMode::Taskbar) {
-                TaskbarLayoutResult r = EnsureTaskbarBand();
-                if (r == TaskbarLayoutResult::Ok && IsTaskbarBandReady()) {
-                    if (taskbarRetryHideMain_) ShowWindow(hwnd_, SW_HIDE);
-                    taskbarRetryHideMain_ = false;
-                } else {
-                    ShowWindow(hwnd_, SW_SHOW);
-                    SetTimer(hwnd_, kTaskbarRetryTimerId, 3000, nullptr);
-                }
-            }
-        } else if (wp == kTaskbarRefreshTimerId) {
-            if (mountMode_ == MountMode::Taskbar) {
-                bool mainWasHidden = !IsWindowVisible(hwnd_);
-                TaskbarLayoutResult r = EnsureTaskbarBand();
-                if (r == TaskbarLayoutResult::Ok && IsTaskbarBandReady()) {
-                    if (mainWasHidden) ShowWindow(hwnd_, SW_HIDE);
-                    InvalidateTaskbarBand();
-                } else if (r == TaskbarLayoutResult::TransientUnavailable) {
-                    TraceTaskbarBand(L"refresh-transient");
-                    if (mainWasHidden) ShowWindow(hwnd_, SW_SHOW);
-                    ScheduleTaskbarRetry(mainWasHidden);
-                } else if (r == TaskbarLayoutResult::Fatal) {
-                    TraceTaskbarBand(L"refresh-fatal");
-                    DestroyTaskbarBand();
-                    ShowWindow(hwnd_, SW_SHOW);
-                    ScheduleTaskbarRetry(mainWasHidden);
-                } else {
-                    TraceTaskbarBand(L"refresh-not-ready");
-                    if (mainWasHidden) ShowWindow(hwnd_, SW_SHOW);
-                    ScheduleTaskbarRetry(mainWasHidden);
-                }
-            } else {
-                KillTimer(hwnd_, kTaskbarRefreshTimerId);
             }
         }
         return 0;
@@ -1157,18 +1028,12 @@ void MainWindow::RemoveTrayIcon() {
 }
 
 void MainWindow::HandleMenuCommand(UINT cmd) {
-    if (const auto* strategy = FindTaskbarStrategyCommand(cmd)) {
-        SetTaskbarStrategy(strategy->id);
-        if (mountMode_ != MountMode::Taskbar) SetMountMode(MountMode::Taskbar);
-        return;
-    }
     switch (cmd) {
         case 1:  Show();                              break;
         case 2:  ToggleAutostart();                   break;
         case 3:  ExitApp();                           break;
         case 10: SetMountMode(MountMode::Normal);     break;
         case 11: SetMountMode(MountMode::Desktop);    break;
-        case 12: SetMountMode(MountMode::Taskbar);    break;
         case 30: SetCapsuleStyle(CapsuleStyle::Slim);
                  if (mountMode_ != MountMode::Capsule) SetMountMode(MountMode::Capsule); break;
         case 31: SetCapsuleStyle(CapsuleStyle::Dot);
@@ -1186,10 +1051,8 @@ void MainWindow::ShowTrayMenu() {
         PopupMenuItem{ 1, T(Str::Show, lang_) },
         PopupMenuItem{ 0, L"", true },
         PopupMenuItem{ 10, T(Str::ModeNormal, lang_), false, mountMode_ == MountMode::Normal },
-        PopupMenuItem{ 11, T(Str::ModeDesktop, lang_), false, mountMode_ == MountMode::Desktop },
-        PopupMenuItem{ 12, T(Str::ModeTaskbar, lang_), false, mountMode_ == MountMode::Taskbar }
+        PopupMenuItem{ 11, T(Str::ModeDesktop, lang_), false, mountMode_ == MountMode::Desktop }
     };
-    AppendTaskbarStrategyItems(items, lang_, ui_.taskbarStrategy);
     items.insert(items.end(), {
         PopupMenuItem{ 0, T(Str::ModeCapsule, lang_), false, false, false, false },
         PopupMenuItem{ 30, T(Str::StyleSlim, lang_), false, inCapsule && capsuleStyle_ == CapsuleStyle::Slim, false, true, 1 },
@@ -1215,10 +1078,8 @@ void MainWindow::ShowTitleMenu() {
     const bool inCapsule = mountMode_ == MountMode::Capsule;
     std::vector<PopupMenuItem> items{
         PopupMenuItem{ 10, T(Str::ModeNormal, lang_), false, mountMode_ == MountMode::Normal },
-        PopupMenuItem{ 11, T(Str::ModeDesktop, lang_), false, mountMode_ == MountMode::Desktop },
-        PopupMenuItem{ 12, T(Str::ModeTaskbar, lang_), false, mountMode_ == MountMode::Taskbar }
+        PopupMenuItem{ 11, T(Str::ModeDesktop, lang_), false, mountMode_ == MountMode::Desktop }
     };
-    AppendTaskbarStrategyItems(items, lang_, ui_.taskbarStrategy);
     items.insert(items.end(), {
         PopupMenuItem{ 0, T(Str::ModeCapsule, lang_), false, false, false, false },
         PopupMenuItem{ 30, T(Str::StyleSlim, lang_), false, inCapsule && capsuleStyle_ == CapsuleStyle::Slim, false, true, 1 },
@@ -1257,14 +1118,6 @@ void MainWindow::SetMountMode(MountMode m) {
     if (editing()) CommitEdit(false);
     if (!capsuleShrunk()) CaptureVisibleGeometry();
 
-    // 任务栏模式按 TrafficMonitor 的生命周期持续重建；首次未就绪不弹窗回退。
-    if (m == MountMode::Taskbar) {
-        TryEnterTaskbarMode(true);
-        return;
-    }
-    // 从任务栏模式切到其它模式：先销毁状态条，再走常规流程
-    if (mountMode_ == MountMode::Taskbar) LeaveTaskbarMode();
-
     mountMode_ = m;
     ui_.mountMode = (m == MountMode::Desktop) ? "desktop"
                   : (m == MountMode::Capsule) ? "capsule" : "normal";
@@ -1277,20 +1130,6 @@ void MainWindow::ApplyMountMode() {
     animActive_ = false;
     capsuleExpanded_ = false;
 
-    if (mountMode_ == MountMode::Taskbar) {
-        TaskbarLayoutResult r = EnsureTaskbarBand();
-        if (r == TaskbarLayoutResult::Ok && IsTaskbarBandReady()) {
-            ShowWindow(hwnd_, SW_HIDE);
-            return;
-        }
-        if (r == TaskbarLayoutResult::TransientUnavailable) {
-            ScheduleTaskbarRetry(true);
-        } else {
-            DestroyTaskbarBand();
-            ScheduleTaskbarRetry(true);
-        }
-    }
-
     if (mountMode_ == MountMode::Desktop) {
         // 沉到最底层贴桌面：不挡工作窗口、看桌面时可见，且不依赖脆弱又挑版本的 WorkerW 嵌入
         SetWindowPos(hwnd_, HWND_BOTTOM, geom_.x, geom_.y, geom_.w, geom_.h,
@@ -1301,7 +1140,7 @@ void MainWindow::ApplyMountMode() {
         SetWindowPos(hwnd_, HWND_TOPMOST, c.left, c.top,
                      c.right - c.left, c.bottom - c.top,
                      SWP_NOACTIVATE | SWP_SHOWWINDOW);
-    } else { // Normal，或任务栏状态条暂不可用时显示完整窗口
+    } else { // Normal
         SetWindowPos(hwnd_, ui_.alwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
                      geom_.x, geom_.y, geom_.w, geom_.h,
                      SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -1648,7 +1487,6 @@ void MainWindow::ExitApp() {
     if (editing()) CommitEdit(false); // 退出前把编辑中的文本落入 model，避免丢失
     SaveNow();
     RemoveTrayIcon();
-    DestroyTaskbarBand(); // 任务栏状态条是 Explorer 子窗口，退出前显式销毁
     if (editFont_) { DeleteObject(editFont_); editFont_ = nullptr; }
     if (editBg_)   { DeleteObject(editBg_);   editBg_   = nullptr; }
     DiscardDeviceResources();
@@ -1666,7 +1504,6 @@ void MainWindow::ScheduleSave() {
 
 void MainWindow::SaveNow() {
     CaptureGeometry();
-    if (mountMode_ == MountMode::Taskbar) CaptureTaskbarDockFromBand();
     if (!Store::Save(model_, geom_, ui_)) {
         // 保存失败（磁盘满 / 占用 / 权限）：保留待存标记并延迟重试，不静默丢改动
         savePending_ = true;
@@ -1675,8 +1512,6 @@ void MainWindow::SaveNow() {
 }
 
 void MainWindow::CaptureGeometry() {
-    // 任务栏模式下主窗口隐藏，不能用其矩形污染 geom_（AC-12）
-    if (mountMode_ == MountMode::Taskbar && !IsWindowVisible(hwnd_)) return;
     RECT rc;
     if (!GetWindowRect(hwnd_, &rc)) return;
     int w = rc.right - rc.left;

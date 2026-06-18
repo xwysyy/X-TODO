@@ -68,10 +68,6 @@ void CenterWindowOverOwner(HWND dialog, HWND owner) {
     SetWindowPos(dialog, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
-COLORREF ToColorRef(uint32_t rgb) {
-    return RGB((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
-}
-
 uint32_t BlendColor(uint32_t fg, uint32_t bg, float a) {
     int fr = (fg >> 16) & 0xFF, fg2 = (fg >> 8) & 0xFF, fb = fg & 0xFF;
     int br = (bg >> 16) & 0xFF, bg2 = (bg >> 8) & 0xFF, bb = bg & 0xFF;
@@ -79,6 +75,23 @@ uint32_t BlendColor(uint32_t fg, uint32_t bg, float a) {
     int g = bg2 + (int)((fg2 - bg2) * a + 0.5f);
     int b = bb + (int)((fb - bb) * a + 0.5f);
     return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+}
+
+float DpiScale(HWND owner) {
+    UINT dpi = owner ? GetDpiForWindow(owner) : 96;
+    return (float)dpi / 96.0f;
+}
+
+void ApplyPopupRoundShape(HWND hwnd, int w, int h, int regionRadius) {
+    int corner = 3; // DWMWCP_ROUNDSMALL
+    HRESULT hr = DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
+    if (SUCCEEDED(hr)) {
+        COLORREF border = 0xFFFFFFFE; // DWMWA_COLOR_NONE
+        DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &border, sizeof(border));
+    } else {
+        HRGN rgn = CreateRoundRectRgn(0, 0, w + 1, h + 1, regionRadius, regionRadius);
+        if (rgn && !SetWindowRgn(hwnd, rgn, TRUE)) DeleteObject(rgn);
+    }
 }
 
 int DpiPx(HWND owner, float v) {
@@ -99,44 +112,6 @@ int ClampPopupWidthToOwner(HWND owner, int preferred, int minW, int fallbackMaxW
     return ClampInt(preferred, minW, maxW);
 }
 
-HFONT CreateUiFont(HWND owner, float size, bool bold = false) {
-    LOGFONTW lf{};
-    lf.lfHeight = -DpiPx(owner, size);
-    lf.lfWeight = bold ? FW_SEMIBOLD : FW_NORMAL;
-    lf.lfQuality = CLEARTYPE_QUALITY;
-    wcscpy_s(lf.lfFaceName, Theme::kFontFamily);
-    return CreateFontIndirectW(&lf);
-}
-
-void FillRound(HDC dc, const RECT& r, int radius, uint32_t color) {
-    HBRUSH brush = CreateSolidBrush(ToColorRef(color));
-    HGDIOBJ oldBrush = SelectObject(dc, brush);
-    HGDIOBJ oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
-    RoundRect(dc, r.left, r.top, r.right, r.bottom, radius, radius);
-    SelectObject(dc, oldPen);
-    SelectObject(dc, oldBrush);
-    DeleteObject(brush);
-}
-
-void StrokeRound(HDC dc, const RECT& r, int radius, uint32_t color) {
-    HPEN pen = CreatePen(PS_SOLID, 1, ToColorRef(color));
-    HGDIOBJ oldPen = SelectObject(dc, pen);
-    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    RoundRect(dc, r.left, r.top, r.right, r.bottom, radius, radius);
-    SelectObject(dc, oldBrush);
-    SelectObject(dc, oldPen);
-    DeleteObject(pen);
-}
-
-void DrawTextInRect(HDC dc, const std::wstring& text, RECT r, HFONT font,
-                    uint32_t color, UINT flags) {
-    HGDIOBJ oldFont = SelectObject(dc, font);
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, ToColorRef(color));
-    DrawTextW(dc, text.c_str(), (int)text.size(), &r, flags);
-    SelectObject(dc, oldFont);
-}
-
 bool RegisterPopupClass(const wchar_t* className, WNDPROC proc) {
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
@@ -148,12 +123,6 @@ bool RegisterPopupClass(const wchar_t* className, WNDPROC proc) {
     wc.lpszClassName = className;
     if (RegisterClassExW(&wc)) return true;
     return GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
-}
-
-void ApplyRoundRegion(HWND hwnd, int w, int h, int radius) {
-    HRGN rgn = CreateRoundRectRgn(0, 0, w + 1, h + 1, radius, radius);
-    if (!rgn) return;
-    if (!SetWindowRgn(hwnd, rgn, TRUE)) DeleteObject(rgn);
 }
 
 enum class ConfirmButton { None, Ok, Cancel };
@@ -170,9 +139,16 @@ struct ConfirmState {
     ConfirmButton pressed = ConfirmButton::None;
     int w = 0;
     int h = 0;
-    int msgW = 0;   // 正文实测宽（水平居中用）
-    int msgH = 0;   // 正文实测高（按内容算窗口高）
-    int btnW = 0;   // 按钮宽（按文字实测，至少 50）
+    int msgW = 0;
+    int msgH = 0;
+    int btnW = 0;
+    ID2D1Factory* d2dFactory = nullptr;
+    IDWriteFactory* dwrite = nullptr;
+    ID2D1HwndRenderTarget* rt = nullptr;
+    ID2D1SolidColorBrush* brush = nullptr;
+    IDWriteTextFormat* textFmt = nullptr;
+    IDWriteTextFormat* btnFmt = nullptr;
+    IDWriteTextFormat* iconFmt = nullptr;
 };
 
 RECT ConfirmOkRect(const ConfirmState& s) {
@@ -203,19 +179,20 @@ void EndConfirm(ConfirmState* s, bool result) {
     if (s->hwnd && IsWindow(s->hwnd)) DestroyWindow(s->hwnd);
 }
 
-void DrawButton(HDC dc, HWND owner, const RECT& r, const std::wstring& label,
-                bool primary, bool hover, bool pressed) {
-    int radius = DpiPx(owner, 9);
+void D2DDrawButton(ConfirmState* s, const D2D1_RECT_F& r, const std::wstring& label,
+                   bool primary, bool hover, bool pressed) {
+    float scale = DpiScale(s->owner);
+    float radius = 9.0f * scale;
     uint32_t fill = primary ? Theme::kDanger : Theme::kPaper;
     if (primary && hover) fill = BlendColor(Theme::kDanger, 0xA95745, pressed ? 0.55f : 0.25f);
     if (!primary && hover) fill = BlendColor(Theme::kHover, Theme::kPaper, pressed ? 0.10f : 0.05f);
-    FillRound(dc, r, radius, fill);
-    StrokeRound(dc, r, radius, primary ? Theme::kDanger : Theme::kPaperEdge);
-    HFONT font = CreateUiFont(owner, 11.0f, primary);
-    RECT tr = r;
-    DrawTextInRect(dc, label, tr, font, primary ? 0xFFFFFF : Theme::kText,
-                   DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    DeleteObject(font);
+    D2D1_ROUNDED_RECT rr{ r, radius, radius };
+    s->brush->SetColor(Theme::Color(fill));
+    s->rt->FillRoundedRectangle(rr, s->brush);
+    s->brush->SetColor(Theme::Color(primary ? Theme::kDanger : Theme::kPaperEdge));
+    s->rt->DrawRoundedRectangle(rr, s->brush, 1.0f);
+    s->brush->SetColor(Theme::Color(primary ? 0xFFFFFF : Theme::kText));
+    s->rt->DrawTextW(label.c_str(), (UINT32)label.size(), s->btnFmt, r, s->brush);
 }
 
 LRESULT CALLBACK ConfirmProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -232,46 +209,50 @@ LRESULT CALLBACK ConfirmProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_PAINT: {
         PAINTSTRUCT ps{};
-        HDC dc = BeginPaint(hwnd, &ps);
+        BeginPaint(hwnd, &ps);
+        if (!s->rt) { EndPaint(hwnd, &ps); return 0; }
+        float scale = DpiScale(s->owner);
+        auto S = [scale](float v) { return v * scale; };
         RECT rc{}; GetClientRect(hwnd, &rc);
-        FillRound(dc, rc, DpiPx(s->owner, 16), Theme::kPaper);
-        StrokeRound(dc, RECT{ 0, 0, rc.right, rc.bottom }, DpiPx(s->owner, 16), Theme::kPaperEdge);
+        float W = (float)(rc.right - rc.left), H = (float)(rc.bottom - rc.top);
 
-        int padX = DpiPx(s->owner, 14);
-        int padTop = DpiPx(s->owner, 14);
-        int icon = DpiPx(s->owner, 14);
-        int iconGap = DpiPx(s->owner, 9);
+        s->rt->BeginDraw();
+        s->rt->SetTransform(D2D1::Matrix3x2F::Identity());
+        s->rt->Clear(Theme::Color(Theme::kPaper));
+
+        float padX = S(14), padTop = S(14), iconSz = S(14), iconGap = S(9);
         uint32_t accent = s->danger ? Theme::kDanger : Theme::kCheckFill;
 
-        int rowH = s->msgH > icon ? s->msgH : icon;
-        int blockW = icon + iconGap + s->msgW;
-        int blockLeft = (rc.right - blockW) / 2;
+        float rowH = (float)s->msgH > iconSz ? (float)s->msgH : iconSz;
+        float blockW = iconSz + iconGap + (float)s->msgW;
+        float blockLeft = (W - blockW) / 2.0f;
         if (blockLeft < padX) blockLeft = padX;
 
-        int iconTop = padTop + (rowH - icon) / 2;
-        RECT iconRect{ blockLeft, iconTop, blockLeft + icon, iconTop + icon };
-        FillRound(dc, iconRect, icon, BlendColor(accent, Theme::kPaper, 0.12f));
-        StrokeRound(dc, iconRect, icon, accent);
-        HFONT iconFont = CreateUiFont(s->owner, 8.0f, true);
-        RECT ir = iconRect;
-        DrawTextInRect(dc, L"!", ir, iconFont, accent,
-                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        DeleteObject(iconFont);
+        float iconTop = padTop + (rowH - iconSz) / 2.0f;
+        D2D1_RECT_F iconRect = D2D1::RectF(blockLeft, iconTop, blockLeft + iconSz, iconTop + iconSz);
+        float iconR = iconSz * 0.5f;
+        D2D1_ROUNDED_RECT iconRR{ iconRect, iconR, iconR };
+        s->brush->SetColor(Theme::Color(BlendColor(accent, Theme::kPaper, 0.12f)));
+        s->rt->FillRoundedRectangle(iconRR, s->brush);
+        s->brush->SetColor(Theme::Color(accent));
+        s->rt->DrawRoundedRectangle(iconRR, s->brush, 1.0f);
+        s->rt->DrawTextW(L"!", 1, s->iconFmt, iconRect, s->brush);
 
-        HFONT textFont = CreateUiFont(s->owner, 12.0f, false);
-        int msgLeft = blockLeft + icon + iconGap;
-        int msgTop = padTop + (rowH - s->msgH) / 2;
-        RECT msgRect{ msgLeft, msgTop, msgLeft + s->msgW, msgTop + s->msgH };
-        DrawTextInRect(dc, s->message, msgRect, textFont, Theme::kText,
-                       DT_CENTER | DT_TOP | DT_WORDBREAK);
-        DeleteObject(textFont);
+        float msgLeft = blockLeft + iconSz + iconGap;
+        float msgTop = padTop + (rowH - (float)s->msgH) / 2.0f;
+        D2D1_RECT_F msgRect = D2D1::RectF(msgLeft, msgTop, msgLeft + (float)s->msgW, msgTop + (float)s->msgH);
+        s->brush->SetColor(Theme::Color(Theme::kText));
+        s->rt->DrawTextW(s->message.c_str(), (UINT32)s->message.size(), s->textFmt, msgRect, s->brush);
 
-        RECT cancel = ConfirmCancelRect(*s);
-        RECT ok = ConfirmOkRect(*s);
-        DrawButton(dc, s->owner, cancel, T(Str::ConfirmCancel, s->lang),
-                   false, s->hover == ConfirmButton::Cancel, s->pressed == ConfirmButton::Cancel);
-        DrawButton(dc, s->owner, ok, T(Str::ConfirmOk, s->lang),
-                   true, s->hover == ConfirmButton::Ok, s->pressed == ConfirmButton::Ok);
+        RECT cancelI = ConfirmCancelRect(*s), okI = ConfirmOkRect(*s);
+        D2D1_RECT_F cancelR = D2D1::RectF((float)cancelI.left, (float)cancelI.top, (float)cancelI.right, (float)cancelI.bottom);
+        D2D1_RECT_F okR = D2D1::RectF((float)okI.left, (float)okI.top, (float)okI.right, (float)okI.bottom);
+        D2DDrawButton(s, cancelR, T(Str::ConfirmCancel, s->lang),
+                      false, s->hover == ConfirmButton::Cancel, s->pressed == ConfirmButton::Cancel);
+        D2DDrawButton(s, okR, T(Str::ConfirmOk, s->lang),
+                      true, s->hover == ConfirmButton::Ok, s->pressed == ConfirmButton::Ok);
+
+        s->rt->EndDraw();
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -308,6 +289,13 @@ LRESULT CALLBACK ConfirmProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_CLOSE:
         EndConfirm(s, false);
         return 0;
+    case WM_DESTROY:
+        SafeRelease(&s->iconFmt);
+        SafeRelease(&s->btnFmt);
+        SafeRelease(&s->textFmt);
+        SafeRelease(&s->brush);
+        SafeRelease(&s->rt);
+        return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -320,33 +308,31 @@ void MeasureConfirm(ConfirmState& s) {
     int minAvail = DpiPx(s.owner, 40);
     if (avail < minAvail) avail = minAvail;
 
-    HDC dc = GetDC(s.owner);
+    IDWriteTextLayout* layout = nullptr;
+    s.dwrite->CreateTextLayout(s.message.c_str(), (UINT32)s.message.size(),
+                               s.textFmt, (float)avail, 10000.0f, &layout);
+    if (layout) {
+        DWRITE_TEXT_METRICS tm{};
+        layout->GetMetrics(&tm);
+        s.msgW = (int)(tm.width + 0.5f);
+        s.msgH = (int)(tm.height + 0.5f);
+        layout->Release();
+    }
 
-    HFONT textFont = CreateUiFont(s.owner, 12.0f, false);
-    HGDIOBJ prev = SelectObject(dc, textFont);
-    RECT mr{ 0, 0, avail, 0 };
-    DrawTextW(dc, s.message.c_str(), (int)s.message.size(), &mr,
-              DT_CALCRECT | DT_WORDBREAK);
-    s.msgW = mr.right - mr.left;
-    s.msgH = mr.bottom - mr.top;
-    SelectObject(dc, prev);
-    DeleteObject(textFont);
-
-    HFONT btnFont = CreateUiFont(s.owner, 11.0f, true);
-    prev = SelectObject(dc, btnFont);
     int btnW = DpiPx(s.owner, 54);
     const wchar_t* labels[2] = { T(Str::ConfirmOk, s.lang), T(Str::ConfirmCancel, s.lang) };
     for (const wchar_t* txt : labels) {
-        SIZE sz{};
-        GetTextExtentPoint32W(dc, txt, (int)wcslen(txt), &sz);
-        int need = sz.cx + DpiPx(s.owner, 24);
-        if (need > btnW) btnW = need;
+        IDWriteTextLayout* bl = nullptr;
+        s.dwrite->CreateTextLayout(txt, (UINT32)wcslen(txt), s.btnFmt, 10000.0f, 100.0f, &bl);
+        if (bl) {
+            DWRITE_TEXT_METRICS bm{};
+            bl->GetMetrics(&bm);
+            int need = (int)(bm.width + 0.5f) + DpiPx(s.owner, 24);
+            if (need > btnW) btnW = need;
+            bl->Release();
+        }
     }
     s.btnW = btnW;
-    SelectObject(dc, prev);
-    DeleteObject(btnFont);
-
-    ReleaseDC(s.owner, dc);
 }
 
 int ConfirmHeight(const ConfirmState& s) {
@@ -359,14 +345,37 @@ int ConfirmHeight(const ConfirmState& s) {
     return padTop + rowH + msgBtnGap + btnH + padBottom;
 }
 
-bool ShowThemedConfirm(HWND owner, const wchar_t* text, Lang lang, bool danger) {
+bool ShowThemedConfirm(HWND owner, const wchar_t* text, Lang lang, bool danger,
+                       ID2D1Factory* d2dFactory, IDWriteFactory* dwrite) {
     const wchar_t* cls = L"XTodoConfirmPopup";
     if (!RegisterPopupClass(cls, ConfirmProc)) return false;
+    float scale = DpiScale(owner);
     ConfirmState state{};
     state.owner = owner;
     state.message = text ? text : L"";
     state.lang = lang;
     state.danger = danger;
+    state.d2dFactory = d2dFactory;
+    state.dwrite = dwrite;
+
+    dwrite->CreateTextFormat(Theme::kFontFamily, nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+                             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                             12.0f * scale, L"", &state.textFmt);
+    dwrite->CreateTextFormat(Theme::kFontFamily, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                             11.0f * scale, L"", &state.btnFmt);
+    if (state.btnFmt) {
+        state.btnFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        state.btnFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+    dwrite->CreateTextFormat(Theme::kFontFamily, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                             8.0f * scale, L"", &state.iconFmt);
+    if (state.iconFmt) {
+        state.iconFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        state.iconFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+
     state.w = ClampPopupWidthToOwner(owner, DpiPx(owner, 188),
                                      DpiPx(owner, 160), DpiPx(owner, 188));
     MeasureConfirm(state);
@@ -375,8 +384,27 @@ bool ShowThemedConfirm(HWND owner, const wchar_t* text, Lang lang, bool danger) 
     HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, cls, L"",
                                 WS_POPUP, 0, 0, state.w, state.h,
                                 owner, nullptr, GetModuleHandleW(nullptr), &state);
-    if (!hwnd) return false;
-    ApplyRoundRegion(hwnd, state.w, state.h, DpiPx(owner, 16));
+    if (!hwnd) {
+        SafeRelease(&state.iconFmt);
+        SafeRelease(&state.btnFmt);
+        SafeRelease(&state.textFmt);
+        return false;
+    }
+    ApplyPopupRoundShape(hwnd, state.w, state.h, DpiPx(owner, 16));
+
+    D2D1_SIZE_U sz = D2D1::SizeU(state.w, state.h);
+    if (FAILED(d2dFactory->CreateHwndRenderTarget(D2D1::RenderTargetProperties(),
+                                                   D2D1::HwndRenderTargetProperties(hwnd, sz),
+                                                   &state.rt))) {
+        DestroyWindow(hwnd);
+        return false;
+    }
+    state.rt->SetDpi(96.0f, 96.0f);
+    if (FAILED(state.rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), &state.brush))) {
+        DestroyWindow(hwnd);
+        return false;
+    }
+
     CenterWindowOverOwner(hwnd, owner);
     EnableWindow(owner, FALSE);
     ShowWindow(hwnd, SW_SHOW);
@@ -418,6 +446,11 @@ struct PopupMenuState {
     int h = 0;
     int rowH = 0;
     int sepH = 0;
+    ID2D1Factory* d2dFactory = nullptr;
+    IDWriteFactory* dwrite = nullptr;
+    ID2D1HwndRenderTarget* rt = nullptr;
+    ID2D1SolidColorBrush* brush = nullptr;
+    IDWriteTextFormat* textFmt = nullptr;
 };
 
 int MenuItemAt(const PopupMenuState& s, int y) {
@@ -440,33 +473,22 @@ void EndPopupMenu(PopupMenuState* s, UINT cmd) {
     if (s->hwnd && IsWindow(s->hwnd)) DestroyWindow(s->hwnd);
 }
 
-void DrawCheckMark(HDC dc, const RECT& box, uint32_t color) {
-    HPEN pen = CreatePen(PS_SOLID, 2, ToColorRef(color));
-    HGDIOBJ oldPen = SelectObject(dc, pen);
-    int w = box.right - box.left;
-    int h = box.bottom - box.top;
-    MoveToEx(dc, box.left + w / 4, box.top + h / 2, nullptr);
-    LineTo(dc, box.left + w / 2, box.top + h * 3 / 4);
-    LineTo(dc, box.right - w / 5, box.top + h / 4);
-    SelectObject(dc, oldPen);
-    DeleteObject(pen);
-}
-
-int MeasurePopupMenuWidth(HWND owner, const std::vector<PopupMenuItem>& items) {
-    HDC dc = GetDC(owner);
-    HFONT font = CreateUiFont(owner, 11.0f);
-    HGDIOBJ oldFont = SelectObject(dc, font);
+int MeasurePopupMenuWidth(HWND owner, const std::vector<PopupMenuItem>& items,
+                          IDWriteFactory* dwrite, IDWriteTextFormat* fmt) {
     int maxText = 0;
     for (const auto& item : items) {
         if (item.separator) continue;
-        SIZE sz{};
-        GetTextExtentPoint32W(dc, item.text.c_str(), (int)item.text.size(), &sz);
-        int textW = sz.cx + DpiPx(owner, 46 + item.indent * 14);
-        if (textW > maxText) maxText = textW;
+        IDWriteTextLayout* layout = nullptr;
+        dwrite->CreateTextLayout(item.text.c_str(), (UINT32)item.text.size(),
+                                 fmt, 10000.0f, 100.0f, &layout);
+        if (layout) {
+            DWRITE_TEXT_METRICS tm{};
+            layout->GetMetrics(&tm);
+            int textW = (int)(tm.width + 0.5f) + DpiPx(owner, 46 + item.indent * 14);
+            if (textW > maxText) maxText = textW;
+            layout->Release();
+        }
     }
-    SelectObject(dc, oldFont);
-    DeleteObject(font);
-    ReleaseDC(owner, dc);
     int minW = DpiPx(owner, 100);
     int preferred = maxText + DpiPx(owner, 4);
     return ClampPopupWidthToOwner(owner, preferred, minW, DpiPx(owner, 300));
@@ -493,47 +515,59 @@ LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_PAINT: {
         PAINTSTRUCT ps{};
-        HDC dc = BeginPaint(hwnd, &ps);
+        BeginPaint(hwnd, &ps);
+        if (!s->rt) { EndPaint(hwnd, &ps); return 0; }
+        float scale = DpiScale(s->owner);
+        auto Sf = [scale](float v) { return v * scale; };
         RECT rc{}; GetClientRect(hwnd, &rc);
-        FillRound(dc, rc, DpiPx(s->owner, 12), Theme::kPaper);
-        StrokeRound(dc, RECT{ 0, 0, rc.right, rc.bottom }, DpiPx(s->owner, 12), Theme::kPaperEdge);
-        HFONT font = CreateUiFont(s->owner, 11.0f);
-        int y = DpiPx(s->owner, 5);
-        int pad = DpiPx(s->owner, 10);
+        float W = (float)(rc.right - rc.left);
+
+        s->rt->BeginDraw();
+        s->rt->SetTransform(D2D1::Matrix3x2F::Identity());
+        s->rt->Clear(Theme::Color(Theme::kPaper));
+
+        float y = Sf(5);
+        float pad = Sf(10);
         for (size_t i = 0; i < s->items->size(); ++i) {
             const PopupMenuItem& item = (*s->items)[i];
             if (item.separator) {
-                int mid = y + s->sepH / 2;
-                HPEN pen = CreatePen(PS_SOLID, 1, ToColorRef(Theme::kDivider));
-                HGDIOBJ oldPen = SelectObject(dc, pen);
-                MoveToEx(dc, pad, mid, nullptr);
-                LineTo(dc, rc.right - pad, mid);
-                SelectObject(dc, oldPen);
-                DeleteObject(pen);
-                y += s->sepH;
+                float mid = y + (float)s->sepH / 2.0f;
+                s->brush->SetColor(Theme::Color(Theme::kDivider));
+                s->rt->DrawLine(D2D1::Point2F(pad, mid), D2D1::Point2F(W - pad, mid), s->brush, 1.0f);
+                y += (float)s->sepH;
                 continue;
             }
-            RECT row{ DpiPx(s->owner, 6), y, rc.right - DpiPx(s->owner, 6), y + s->rowH };
-            if ((int)i == s->hover)
-                FillRound(dc, row, DpiPx(s->owner, 8), BlendColor(Theme::kHover, Theme::kPaper, 0.06f));
-            if (item.checked) {
-                RECT ck{ row.left + DpiPx(s->owner, 6), row.top + DpiPx(s->owner, 5),
-                         row.left + DpiPx(s->owner, 18), row.top + DpiPx(s->owner, 17) };
-                DrawCheckMark(dc, ck, Theme::kCheckFill);
+            D2D1_RECT_F row = D2D1::RectF(Sf(6), y, W - Sf(6), y + (float)s->rowH);
+            if ((int)i == s->hover) {
+                D2D1_ROUNDED_RECT rr{ row, Sf(8), Sf(8) };
+                s->brush->SetColor(Theme::Color(BlendColor(Theme::kHover, Theme::kPaper, 0.06f)));
+                s->rt->FillRoundedRectangle(rr, s->brush);
             }
-            RECT textR{ row.left + DpiPx(s->owner, 24 + item.indent * 14), row.top,
-                        row.right - DpiPx(s->owner, 8), row.bottom };
+            if (item.checked) {
+                float ckL = row.left + Sf(6), ckT = row.top + Sf(5);
+                float ckR = row.left + Sf(18), ckB = row.top + Sf(17);
+                float cw = ckR - ckL, ch = ckB - ckT;
+                s->brush->SetColor(Theme::Color(Theme::kCheckFill));
+                s->rt->DrawLine(D2D1::Point2F(ckL + cw / 4, ckT + ch / 2),
+                                D2D1::Point2F(ckL + cw / 2, ckT + ch * 3 / 4), s->brush, 2.0f);
+                s->rt->DrawLine(D2D1::Point2F(ckL + cw / 2, ckT + ch * 3 / 4),
+                                D2D1::Point2F(ckR - cw / 5, ckT + ch / 4), s->brush, 2.0f);
+            }
+            D2D1_RECT_F textR = D2D1::RectF(row.left + Sf(24.0f + item.indent * 14.0f), row.top,
+                                             row.right - Sf(8), row.bottom);
             uint32_t textColor = item.enabled ? (item.danger ? Theme::kDanger : Theme::kText) : Theme::kTextWeak;
-            DrawTextInRect(dc, item.text, textR, font, textColor,
-                           DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            y += s->rowH;
+            s->brush->SetColor(Theme::Color(textColor));
+            s->rt->DrawTextW(item.text.c_str(), (UINT32)item.text.size(), s->textFmt, textR, s->brush,
+                             D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            y += (float)s->rowH;
         }
-        DeleteObject(font);
+
+        s->rt->EndDraw();
         EndPaint(hwnd, &ps);
         return 0;
     }
     case WM_MOUSEMOVE: {
-        SetCursor(LoadCursorW(nullptr, IDC_ARROW)); // capture 下系统不发 WM_SETCURSOR，须手动保持箭头
+        SetCursor(LoadCursorW(nullptr, IDC_ARROW));
         int h = MenuItemAt(*s, GET_Y_LPARAM(lp));
         if (h != s->hover) { s->hover = h; InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
@@ -575,19 +609,37 @@ LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_CAPTURECHANGED:
         if (!s->done && (HWND)lp != hwnd) EndPopupMenu(s, 0);
         return 0;
+    case WM_DESTROY:
+        SafeRelease(&s->textFmt);
+        SafeRelease(&s->brush);
+        SafeRelease(&s->rt);
+        return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-UINT ShowPopupMenu(HWND owner, POINT pt, const std::vector<PopupMenuItem>& items, bool alignRight) {
+UINT ShowPopupMenu(HWND owner, POINT pt, const std::vector<PopupMenuItem>& items, bool alignRight,
+                   ID2D1Factory* d2dFactory, IDWriteFactory* dwrite) {
     const wchar_t* cls = L"XTodoPopupMenu";
     if (!RegisterPopupClass(cls, PopupMenuProc)) return 0;
+    float scale = DpiScale(owner);
     PopupMenuState state{};
     state.owner = owner;
     state.items = &items;
+    state.d2dFactory = d2dFactory;
+    state.dwrite = dwrite;
     state.rowH = DpiPx(owner, 22);
     state.sepH = DpiPx(owner, 6);
-    state.w = MeasurePopupMenuWidth(owner, items);
+
+    dwrite->CreateTextFormat(Theme::kFontFamily, nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+                             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                             11.0f * scale, L"", &state.textFmt);
+    if (state.textFmt) {
+        state.textFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        state.textFmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
+
+    state.w = MeasurePopupMenuWidth(owner, items, dwrite, state.textFmt);
     state.h = MeasurePopupMenuHeight(owner, items);
 
     if (alignRight) pt.x -= state.w;
@@ -601,13 +653,30 @@ UINT ShowPopupMenu(HWND owner, POINT pt, const std::vector<PopupMenuItem>& items
     HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, cls, L"",
                                 WS_POPUP, pt.x, pt.y, state.w, state.h,
                                 nullptr, nullptr, GetModuleHandleW(nullptr), &state);
-    if (!hwnd) return 0;
-    ApplyRoundRegion(hwnd, state.w, state.h, DpiPx(owner, 12));
+    if (!hwnd) {
+        SafeRelease(&state.textFmt);
+        return 0;
+    }
+    ApplyPopupRoundShape(hwnd, state.w, state.h, DpiPx(owner, 12));
+
+    D2D1_SIZE_U sz = D2D1::SizeU(state.w, state.h);
+    if (FAILED(d2dFactory->CreateHwndRenderTarget(D2D1::RenderTargetProperties(),
+                                                   D2D1::HwndRenderTargetProperties(hwnd, sz),
+                                                   &state.rt))) {
+        DestroyWindow(hwnd);
+        return 0;
+    }
+    state.rt->SetDpi(96.0f, 96.0f);
+    if (FAILED(state.rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), &state.brush))) {
+        DestroyWindow(hwnd);
+        return 0;
+    }
+
     ShowWindow(hwnd, SW_SHOW);
     SetForegroundWindow(hwnd);
     SetFocus(hwnd);
     SetCapture(hwnd);
-    SetCursor(LoadCursorW(nullptr, IDC_ARROW)); // 持有 capture 期间系统不自动管光标，立即设回箭头（防 resize 光标残留）
+    SetCursor(LoadCursorW(nullptr, IDC_ARROW));
 
     MSG msg{};
     BOOL got = TRUE;
@@ -1067,7 +1136,7 @@ void MainWindow::ShowTrayMenu() {
     POINT pt;
     GetCursorPos(&pt);
     menuOpen_ = true;
-    UINT cmd = ShowPopupMenu(hwnd_, pt, items, false);
+    UINT cmd = ShowPopupMenu(hwnd_, pt, items, false, d2dFactory_, dwrite_);
     menuOpen_ = false;                 // 必须在 HandleMenuCommand 前清，且无论返回值
     HandleMenuCommand(cmd);
     // (R1-F001) 补判收缩，排除：退出(3)；以及刚由 Show(1) 把折叠胶囊展开的情形（否则光标在窗外会被立刻收回）
@@ -1096,7 +1165,7 @@ void MainWindow::ShowTitleMenu() {
     POINT pt{ rc.right - (LONG)S(6), (LONG)menuRect_.bottom }; // 贴近窗口右侧弹出
     ClientToScreen(hwnd_, &pt);
     menuOpen_ = true;
-    UINT cmd = ShowPopupMenu(hwnd_, pt, items, true);
+    UINT cmd = ShowPopupMenu(hwnd_, pt, items, true, d2dFactory_, dwrite_);
     menuOpen_ = false;                 // 必须在 HandleMenuCommand 前清，且无论返回值
     HandleMenuCommand(cmd);
     if (cmd != 3) MaybeCollapseCapsule(); // (R1-F001) 非退出：按真实光标位置补判（cmd==3 已 DestroyWindow）
@@ -1446,7 +1515,7 @@ void MainWindow::ToggleAutostart() {
 
 bool MainWindow::Confirm(Str message, UINT icon) {
     (void)icon;
-    return ShowThemedConfirm(hwnd_, T(message, lang_), lang_, true);
+    return ShowThemedConfirm(hwnd_, T(message, lang_), lang_, true, d2dFactory_, dwrite_);
 }
 
 void MainWindow::DeleteItem(int itemIndex) {

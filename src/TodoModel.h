@@ -7,13 +7,24 @@ struct TodoItem {
     bool done = false;
 };
 
-// 待办数据。不变量：未完成项始终排在前段，已完成项排在后段。
+struct TodoList {
+    std::string id;
+    std::wstring title;
+    bool completedExpanded = false;
+    std::vector<TodoItem> items;
+    int activeCount = 0;
+};
+
+// 待办数据。每个列表内的不变量：未完成项始终排在前段，已完成项排在后段。
 class TodoModel {
 public:
-    const std::vector<TodoItem>& Items() const { return items_; }
-    int Count() const { return static_cast<int>(items_.size()); }
+    TodoModel();
+
+    const std::vector<TodoItem>& Items() const { return CurrentList().items; }
+    int Count() const { return static_cast<int>(CurrentList().items.size()); }
     int ActiveCount() const;    // 未完成数量（= 已完成段起始下标）
     int CompletedCount() const; // 已完成数量
+    int TotalActiveCount() const;
 
     int  AddActive(const std::wstring& text); // 未完成段末尾追加，返回其下标
     void SetText(int index, const std::wstring& text);
@@ -22,10 +33,27 @@ public:
     void ClearCompleted();
     void MoveActive(int from, int insertAt);  // 未完成段内重排：移除 from 后插入到 insertAt
 
-    void ReplaceAll(std::vector<TodoItem> items); // 加载时整体替换（会规整顺序）
+    const std::vector<TodoList>& Lists() const { return lists_; }
+    int ListCount() const { return static_cast<int>(lists_.size()); }
+    int CurrentListIndex() const { return currentList_; }
+    const TodoList& CurrentList() const;
+    const TodoList* ListAt(int index) const;
+    int AddList(const std::wstring& title);
+    bool SetCurrentListIndex(int index);
+    bool SetCurrentListId(const std::string& id);
+    void RenameCurrentList(const std::wstring& title);
+    bool DeleteCurrentList();
+    void SetCurrentCompletedExpanded(bool expanded);
+
+    void ReplaceAll(std::vector<TodoItem> items, bool completedExpanded = false); // v1 迁移入口
+    void ReplaceLists(std::vector<TodoList> lists, const std::string& currentId);
 
 private:
-    void Normalize(); // 稳定地把未完成项移到前段，维持不变量
-    std::vector<TodoItem> items_;
-    int activeCount_ = 0; // 未完成数量（已完成段起始下标），随增删改维护，避免每次全量扫描
+    TodoList& CurrentListMutable();
+    void EnsureList();
+    void Normalize(TodoList& list); // 稳定地把未完成项移到前段，维持不变量
+    std::string MakeListId();
+    std::vector<TodoList> lists_;
+    int currentList_ = 0;
+    int nextListId_ = 1;
 };

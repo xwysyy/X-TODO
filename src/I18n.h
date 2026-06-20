@@ -14,6 +14,12 @@ enum class Str {
     ToggleLang,   // 语言切换项（显示目标语言名）
     Exit,         // 退出
     NewItem,      // ＋ 新增一条
+    ListHeader,   // 标签页菜单标题
+    ListNew,      // 新建标签页
+    ListRename,   // 重命名当前标签页
+    ListDelete,   // 删除当前标签页
+    ListNamePrompt,// 重命名输入提示
+    ListDefault,  // 默认标签名
     Completed,    // 已完成
     Clear,        // 清空
     DeleteItemMsg,// 删除确认正文

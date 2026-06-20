@@ -175,7 +175,23 @@ LoadResult Store::Load(TodoModel& model, WindowGeometry& geom, UiState& ui) {
         return LoadResult::Failed;
     }
 
-    std::vector<TodoItem> items;
+    const bool v2 = StartsWith(text, L"XTODO v2");
+    std::vector<TodoItem> legacyItems;
+    std::vector<TodoList> lists;
+    TodoList* currentList = nullptr;
+    std::string selectedListId;
+
+    auto ensureCurrentList = [&]() -> TodoList& {
+        if (!currentList) {
+            TodoList list;
+            list.id = "inbox";
+            list.title = L"默认";
+            lists.push_back(std::move(list));
+            currentList = &lists.back();
+        }
+        return *currentList;
+    };
+
     for (const auto& line : SplitLines(text)) {
         if (StartsWith(line, L"item ")) {
             // 格式：item <0|1> <escaped text>
@@ -184,7 +200,20 @@ LoadResult Store::Load(TodoModel& model, WindowGeometry& geom, UiState& ui) {
             TodoItem it;
             it.done = (flag == L'1');
             it.text = Unescape(rest);
-            items.push_back(std::move(it));
+            if (v2) ensureCurrentList().items.push_back(std::move(it));
+            else    legacyItems.push_back(std::move(it));
+        } else if (StartsWith(line, L"list ")) {
+            std::wstring body = line.substr(5);
+            size_t first = body.find(L' ');
+            size_t second = (first == std::wstring::npos) ? std::wstring::npos : body.find(L' ', first + 1);
+            if (first != std::wstring::npos && second != std::wstring::npos && second > first + 1) {
+                TodoList list;
+                list.id = WideToUtf8(Unescape(body.substr(0, first)));
+                list.completedExpanded = body[first + 1] == L'1';
+                list.title = Unescape(body.substr(second + 1));
+                lists.push_back(std::move(list));
+                currentList = &lists.back();
+            }
         } else if (StartsWith(line, L"win ")) {
             int x = 0, y = 0, w = 0, h = 0;
             if (swscanf_s(line.c_str() + 4, L"%d %d %d %d", &x, &y, &w, &h) == 4) {
@@ -198,6 +227,8 @@ LoadResult Store::Load(TodoModel& model, WindowGeometry& geom, UiState& ui) {
             const std::wstring& v = kv.value;
             if (k == L"completed_expanded") {
                 ui.completedExpanded = (v == L"1");
+            } else if (k == L"current_list") {
+                selectedListId = WideToUtf8(Unescape(v));
             } else if (k == L"always_on_top") {
                 ui.alwaysOnTop = (v == L"1");
             } else if (k == L"mount") {
@@ -234,7 +265,8 @@ LoadResult Store::Load(TodoModel& model, WindowGeometry& geom, UiState& ui) {
             // 未知 ui key：忽略，保留默认值，不触发 corrupt 备份路径
         }
     }
-    model.ReplaceAll(std::move(items));
+    if (v2) model.ReplaceLists(std::move(lists), selectedListId);
+    else    model.ReplaceAll(std::move(legacyItems), ui.completedExpanded);
     return LoadResult::Loaded;
 }
 
@@ -242,14 +274,12 @@ bool Store::Save(const TodoModel& model, const WindowGeometry& geom, const UiSta
     std::wstring path = DataFilePath();
     if (path.empty()) return false;
 
-    std::wstring text = L"XTODO v1\n";
+    std::wstring text = L"XTODO v2\n";
     if (geom.valid) {
         wchar_t buf[128];
         swprintf_s(buf, L"win %d %d %d %d\n", geom.x, geom.y, geom.w, geom.h);
         text += buf;
     }
-    text += ui.completedExpanded ? L"ui completed_expanded=1\n"
-                                 : L"ui completed_expanded=0\n";
     text += ui.alwaysOnTop ? L"ui always_on_top=1\n"
                            : L"ui always_on_top=0\n";
     {
@@ -274,11 +304,22 @@ bool Store::Save(const TodoModel& model, const WindowGeometry& geom, const UiSta
     }
     if (!ui.capsuleMonitor.empty())
         text += L"ui capsule_monitor=" + Escape(Utf8ToWide(ui.capsuleMonitor)) + L"\n";
-    for (const auto& it : model.Items()) {
-        text += L"item ";
-        text += it.done ? L"1 " : L"0 ";
-        text += Escape(it.text);
+
+    const TodoList& current = model.CurrentList();
+    text += L"ui current_list=" + Escape(Utf8ToWide(current.id)) + L"\n";
+
+    for (const auto& list : model.Lists()) {
+        text += L"list ";
+        text += Escape(Utf8ToWide(list.id));
+        text += list.completedExpanded ? L" 1 " : L" 0 ";
+        text += Escape(list.title);
         text += L"\n";
+        for (const auto& it : list.items) {
+            text += L"item ";
+            text += it.done ? L"1 " : L"0 ";
+            text += Escape(it.text);
+            text += L"\n";
+        }
     }
     return WriteAllBytesAtomic(path, WideToUtf8(text));
 }

@@ -56,7 +56,11 @@ private:
         D2D1_RECT_F handle;
         mutable IDWriteTextLayout* strikeLayout = nullptr; // 完成项删除线布局，首帧创建后缓存
     };
-    enum class HitKind { None, Check, Text, Delete, Handle, Section, Clear, Add, Pin, Close, Menu, Theme };
+    struct ListTabLayout {
+        int listIndex = -1;
+        D2D1_RECT_F rect{};
+    };
+    enum class HitKind { None, Check, Text, Delete, Handle, Section, Clear, Add, ListTab, AddList, Pin, Close, Menu, Theme };
     struct Hit { HitKind kind = HitKind::None; int rowIndex = -1; int itemIndex = -1; };
 
     void  RebuildLayout();
@@ -72,6 +76,7 @@ private:
     void DrawRow(const RowLayout& r, bool hovered);
     void DrawCheckbox(const D2D1_RECT_F& box, bool checked);
     void DrawTitleBar();
+    void DrawListTabs();
     void DrawSection(); // 已完成折叠条（内容层，文档坐标）
     void DrawAddRow(bool hovered); // 未完成项后的新增入口（内容层）
     void FillRect(const D2D1_RECT_F& r, uint32_t rgb, float a = 1.0f);
@@ -99,11 +104,16 @@ private:
     bool  AddTrayIcon();
     void  RemoveTrayIcon();
     HICON CreateTrayIconHandle();
+    void  RefreshTrayIcon();
     void  ShowTrayMenu();
     void  ShowTitleMenu();                 // 标题栏菜单按钮弹出
     void  ShowThemeMenu();                 // 标题栏皮肤按钮弹出
     void  HandleMenuCommand(UINT cmd);
     void  SetLanguage(Lang lang);
+    void  SwitchList(int index);
+    void  CreateList();
+    void  RenameCurrentList();
+    void  DeleteCurrentListConfirm();
 
     // —— 主题 ——
     void ReloadThemes();                   // 重扫 %APPDATA%\x-todo\themes\ 自定义主题目录
@@ -144,6 +154,8 @@ private:
 
     // —— 行为 ——
     bool Confirm(Str message, UINT icon);
+    bool ConfirmText(const std::wstring& message, bool danger = true);
+    bool PromptText(const std::wstring& prompt, std::wstring& value);
     void ApplyTopmost();
     void TogglePin();
     void ToggleCompletedExpanded();
@@ -185,6 +197,7 @@ private:
     std::vector<Theme::ThemeNotice> themeNotices_; // 运行时 notice（fallback / 系统读取 / 托盘失败）
 
     std::vector<RowLayout> rows_;
+    std::vector<ListTabLayout> listTabs_;
     float       scroll_       = 0.0f;
     float       contentH_     = 0.0f;
     D2D1_RECT_F addRect_{};     // 新增入口（文档坐标，位于未完成项之后）
@@ -194,6 +207,7 @@ private:
     D2D1_RECT_F closeRect_{};   // 关闭按钮（固定）
     D2D1_RECT_F menuRect_{};    // 标题栏菜单按钮（固定）
     D2D1_RECT_F themeRect_{};   // 标题栏皮肤按钮（固定）
+    D2D1_RECT_F addListRect_{}; // 标签栏新增按钮（固定）
 
     int   hoverRow_   = -1;
     int   editIndex_  = -1;

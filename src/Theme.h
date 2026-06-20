@@ -17,6 +17,7 @@ namespace Theme {
 constexpr float kCorner     = 12.0f; // 窗口圆角半径
 constexpr float kPadX       = 14.0f; // 左右内边距
 constexpr float kTitleH     = 34.0f; // 顶部标题 / 拖动条高度
+constexpr float kTabsH      = 42.0f; // 多列表标签栏高度
 constexpr float kRowH       = 34.0f; // 条目行高
 constexpr float kCheckSize  = 18.0f; // 复选框边长
 constexpr float kFontSize   = 14.0f; // 正文字号

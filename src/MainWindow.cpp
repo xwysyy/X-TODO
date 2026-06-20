@@ -8,6 +8,7 @@
 #include <windowsx.h>
 #include <dwmapi.h>
 #include <cwchar>
+#include <utility>
 
 #ifndef DWMWA_WINDOW_CORNER_PREFERENCE
 #define DWMWA_WINDOW_CORNER_PREFERENCE 33
@@ -37,6 +38,10 @@ constexpr UINT kCmdThemeFollowSystem = 1000;
 constexpr UINT kCmdThemeBuiltinBase  = 1100; // + 内置主题索引
 constexpr UINT kCmdThemeCustomBase   = 1300; // + 自定义主题索引
 constexpr UINT kCmdThemeManager      = 1900;
+constexpr UINT kCmdListBase          = 2100; // + 列表索引
+constexpr UINT kCmdListNew           = 2500;
+constexpr UINT kCmdListRename        = 2501;
+constexpr UINT kCmdListDelete        = 2502;
 
 template <class T> void SafeRelease(T** p) {
     if (*p) { (*p)->Release(); *p = nullptr; }
@@ -66,6 +71,20 @@ int ClampInt(int value, int minValue, int maxValue) {
     if (value < minValue) return minValue;
     if (value > maxValue) return maxValue;
     return value;
+}
+
+std::wstring TrimText(const std::wstring& s) {
+    size_t a = s.find_first_not_of(L" \t\r\n");
+    if (a == std::wstring::npos) return L"";
+    size_t b = s.find_last_not_of(L" \t\r\n");
+    return s.substr(a, b - a + 1);
+}
+
+std::wstring NormalizeSingleLineText(std::wstring text) {
+    for (wchar_t& ch : text) {
+        if (ch == L'\r' || ch == L'\n' || ch == L'\t') ch = L' ';
+    }
+    return TrimText(text);
 }
 
 void CenterWindowOverOwner(HWND dialog, HWND owner) {
@@ -399,6 +418,11 @@ bool ShowThemedConfirm(HWND owner, const wchar_t* text, Lang lang, bool danger,
     dwrite->CreateTextFormat(Theme::kFontFamily, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
                              DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
                              11.0f * scale, L"", &state.btnFmt);
+    if (!state.textFmt || !state.btnFmt) {
+        SafeRelease(&state.btnFmt);
+        SafeRelease(&state.textFmt);
+        return false;
+    }
     if (state.btnFmt) {
         state.btnFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         state.btnFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -406,6 +430,11 @@ bool ShowThemedConfirm(HWND owner, const wchar_t* text, Lang lang, bool danger,
     dwrite->CreateTextFormat(Theme::kFontFamily, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
                              DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
                              8.0f * scale, L"", &state.iconFmt);
+    if (!state.iconFmt) {
+        SafeRelease(&state.btnFmt);
+        SafeRelease(&state.textFmt);
+        return false;
+    }
     if (state.iconFmt) {
         state.iconFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         state.iconFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -457,6 +486,300 @@ bool ShowThemedConfirm(HWND owner, const wchar_t* text, Lang lang, bool danger,
     if (IsWindow(hwnd)) DestroyWindow(hwnd);
     EnableWindow(owner, TRUE);
     SetForegroundWindow(owner);
+    return state.result;
+}
+
+enum class PromptButton { None, Ok, Cancel };
+
+struct PromptState {
+    HWND hwnd = nullptr;
+    HWND owner = nullptr;
+    HWND edit = nullptr;
+    std::wstring prompt;
+    std::wstring value;
+    Lang lang = Lang::Zh;
+    Theme::ThemeVisual theme;
+    bool done = false;
+    bool result = false;
+    PromptButton hover = PromptButton::None;
+    PromptButton pressed = PromptButton::None;
+    int w = 0;
+    int h = 0;
+    int btnW = 0;
+    ID2D1Factory* d2dFactory = nullptr;
+    IDWriteFactory* dwrite = nullptr;
+    ID2D1HwndRenderTarget* rt = nullptr;
+    ID2D1SolidColorBrush* brush = nullptr;
+    IDWriteTextFormat* textFmt = nullptr;
+    IDWriteTextFormat* btnFmt = nullptr;
+    HFONT editFont = nullptr;
+    HBRUSH editBrush = nullptr;
+};
+
+RECT PromptEditRect(const PromptState& s) {
+    int pad = DpiPx(s.owner, 14);
+    int top = DpiPx(s.owner, 38);
+    int h = DpiPx(s.owner, 28);
+    return RECT{ pad, top, s.w - pad, top + h };
+}
+
+RECT PromptOkRect(const PromptState& s) {
+    int bw = s.btnW, bh = DpiPx(s.owner, 24);
+    int gap = DpiPx(s.owner, 8), pad = DpiPx(s.owner, 12);
+    int left = s.w - pad - bw;
+    int top = s.h - pad - bh;
+    return RECT{ left, top, left + bw, top + bh };
+}
+
+RECT PromptCancelRect(const PromptState& s) {
+    RECT ok = PromptOkRect(s);
+    int bw = ok.right - ok.left, gap = DpiPx(s.owner, 8);
+    return RECT{ ok.left - gap - bw, ok.top, ok.left - gap, ok.bottom };
+}
+
+PromptButton PromptHit(const PromptState& s, int x, int y) {
+    POINT p{ x, y };
+    RECT ok = PromptOkRect(s), cancel = PromptCancelRect(s);
+    if (PtInRect(&ok, p)) return PromptButton::Ok;
+    if (PtInRect(&cancel, p)) return PromptButton::Cancel;
+    return PromptButton::None;
+}
+
+std::wstring PromptReadEdit(HWND edit) {
+    int len = GetWindowTextLengthW(edit);
+    if (len <= 0) return L"";
+    std::wstring text((size_t)len + 1, L'\0');
+    int got = GetWindowTextW(edit, text.data(), len + 1);
+    if (got < 0) got = 0;
+    text.resize((size_t)got);
+    return text;
+}
+
+void EndPrompt(PromptState* s, bool result) {
+    if (result && s->edit) s->value = PromptReadEdit(s->edit);
+    s->result = result;
+    s->done = true;
+    if (s->hwnd && IsWindow(s->hwnd)) DestroyWindow(s->hwnd);
+}
+
+void D2DDrawPromptButton(PromptState* s, const D2D1_RECT_F& r, const std::wstring& label,
+                         bool primary, bool hover, bool pressed) {
+    const Theme::ColorSet& c = s->theme.colors;
+    float scale = DpiScale(s->owner);
+    float radius = 9.0f * scale;
+    uint32_t fill = primary ? c.checkFill : c.paperElevated;
+    if (primary && hover) fill = c.checkFillHover;
+    if (!primary && hover) fill = pressed ? c.buttonPressed : c.buttonHover;
+    D2D1_ROUNDED_RECT rr{ r, radius, radius };
+    s->brush->SetColor(Theme::Color(fill));
+    s->rt->FillRoundedRectangle(rr, s->brush);
+    s->brush->SetColor(Theme::Color(primary ? c.checkFill : c.paperEdge));
+    s->rt->DrawRoundedRectangle(rr, s->brush, 1.0f);
+    s->brush->SetColor(Theme::Color(primary ? c.checkMark : c.text));
+    s->rt->DrawTextW(label.c_str(), (UINT32)label.size(), s->btnFmt, r, s->brush);
+}
+
+LRESULT CALLBACK PromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    PromptState* s = reinterpret_cast<PromptState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (msg == WM_NCCREATE) {
+        auto cs = reinterpret_cast<CREATESTRUCTW*>(lp);
+        s = static_cast<PromptState*>(cs->lpCreateParams);
+        s->hwnd = hwnd;
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(s));
+        return TRUE;
+    }
+    if (!s) return DefWindowProcW(hwnd, msg, wp, lp);
+
+    switch (msg) {
+    case WM_CREATE: {
+        RECT er = PromptEditRect(*s);
+        s->edit = CreateWindowExW(0, L"EDIT", s->value.c_str(),
+                                  WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                                  er.left, er.top, er.right - er.left, er.bottom - er.top,
+                                  hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (!s->edit) return -1;
+        LOGFONTW lf{};
+        lf.lfHeight = -DpiPx(s->owner, Theme::kFontSize);
+        lf.lfQuality = CLEARTYPE_QUALITY;
+        wcscpy_s(lf.lfFaceName, Theme::kFontFamily);
+        s->editFont = CreateFontIndirectW(&lf);
+        if (s->editFont) SendMessageW(s->edit, WM_SETFONT, (WPARAM)s->editFont, TRUE);
+        SendMessageW(s->edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+                     MAKELPARAM(DpiPx(s->owner, 6), DpiPx(s->owner, 6)));
+        s->editBrush = CreateSolidBrush(Theme::GdiColor(s->theme.colors.paper));
+        return 0;
+    }
+    case WM_SIZE:
+        if (s->edit) {
+            RECT er = PromptEditRect(*s);
+            MoveWindow(s->edit, er.left, er.top, er.right - er.left, er.bottom - er.top, TRUE);
+        }
+        return 0;
+    case WM_CTLCOLOREDIT: {
+        HDC hdc = (HDC)wp;
+        SetBkColor(hdc, Theme::GdiColor(s->theme.colors.paper));
+        SetTextColor(hdc, Theme::GdiColor(s->theme.colors.text));
+        return (LRESULT)s->editBrush;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        BeginPaint(hwnd, &ps);
+        if (!s->rt) { EndPaint(hwnd, &ps); return 0; }
+        float scale = DpiScale(s->owner);
+        auto S = [scale](float v) { return v * scale; };
+        RECT rc{}; GetClientRect(hwnd, &rc);
+        float W = (float)(rc.right - rc.left);
+
+        s->rt->BeginDraw();
+        s->rt->SetTransform(D2D1::Matrix3x2F::Identity());
+        s->rt->Clear(Theme::Color(s->theme.colors.paperElevated));
+
+        D2D1_RECT_F label = D2D1::RectF(S(14), S(12), W - S(14), S(32));
+        s->brush->SetColor(Theme::Color(s->theme.colors.text));
+        s->rt->DrawTextW(s->prompt.c_str(), (UINT32)s->prompt.size(), s->textFmt, label, s->brush);
+
+        RECT er = PromptEditRect(*s);
+        D2D1_ROUNDED_RECT editRR{ D2D1::RectF((float)er.left - 0.5f, (float)er.top - 0.5f,
+                                             (float)er.right + 0.5f, (float)er.bottom + 0.5f),
+                                  S(7), S(7) };
+        s->brush->SetColor(Theme::Color(s->theme.colors.paperEdge));
+        s->rt->DrawRoundedRectangle(editRR, s->brush, 1.0f);
+
+        RECT cancelI = PromptCancelRect(*s), okI = PromptOkRect(*s);
+        D2D1_RECT_F cancelR = D2D1::RectF((float)cancelI.left, (float)cancelI.top, (float)cancelI.right, (float)cancelI.bottom);
+        D2D1_RECT_F okR = D2D1::RectF((float)okI.left, (float)okI.top, (float)okI.right, (float)okI.bottom);
+        D2DDrawPromptButton(s, cancelR, T(Str::ConfirmCancel, s->lang),
+                            false, s->hover == PromptButton::Cancel, s->pressed == PromptButton::Cancel);
+        D2DDrawPromptButton(s, okR, T(Str::ConfirmOk, s->lang),
+                            true, s->hover == PromptButton::Ok, s->pressed == PromptButton::Ok);
+
+        s->rt->EndDraw();
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_MOUSEMOVE: {
+        PromptButton h = PromptHit(*s, GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+        if (h != s->hover) { s->hover = h; InvalidateRect(hwnd, nullptr, FALSE); }
+        return 0;
+    }
+    case WM_LBUTTONDOWN:
+        s->pressed = PromptHit(*s, GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+        SetCapture(hwnd);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    case WM_LBUTTONUP: {
+        PromptButton pressed = s->pressed;
+        if (GetCapture() == hwnd) ReleaseCapture();
+        PromptButton hit = PromptHit(*s, GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+        s->pressed = PromptButton::None;
+        InvalidateRect(hwnd, nullptr, FALSE);
+        if (hit == pressed && hit == PromptButton::Ok) EndPrompt(s, true);
+        else if (hit == pressed && hit == PromptButton::Cancel) EndPrompt(s, false);
+        return 0;
+    }
+    case WM_CAPTURECHANGED:
+        if (!s->done && (HWND)lp != hwnd && s->pressed != PromptButton::None) {
+            s->pressed = PromptButton::None;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    case WM_CLOSE:
+        EndPrompt(s, false);
+        return 0;
+    case WM_DESTROY:
+        if (s->editFont) { DeleteObject(s->editFont); s->editFont = nullptr; }
+        if (s->editBrush) { DeleteObject(s->editBrush); s->editBrush = nullptr; }
+        SafeRelease(&s->btnFmt);
+        SafeRelease(&s->textFmt);
+        SafeRelease(&s->brush);
+        SafeRelease(&s->rt);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+bool ShowThemedTextPrompt(HWND owner, const wchar_t* prompt, std::wstring& value, Lang lang,
+                          const Theme::ThemeVisual& theme,
+                          ID2D1Factory* d2dFactory, IDWriteFactory* dwrite) {
+    const wchar_t* cls = L"XTodoTextPrompt";
+    if (!RegisterPopupClass(cls, PromptProc)) return false;
+    float scale = DpiScale(owner);
+    PromptState state{};
+    state.owner = owner;
+    state.prompt = prompt ? prompt : L"";
+    state.value = value;
+    state.lang = lang;
+    state.theme = theme;
+    state.d2dFactory = d2dFactory;
+    state.dwrite = dwrite;
+    state.w = ClampPopupWidthToOwner(owner, DpiPx(owner, 240), DpiPx(owner, 200), DpiPx(owner, 260));
+    state.h = DpiPx(owner, 116);
+    state.btnW = DpiPx(owner, 54);
+
+    dwrite->CreateTextFormat(Theme::kFontFamily, nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+                             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                             12.0f * scale, L"", &state.textFmt);
+    dwrite->CreateTextFormat(Theme::kFontFamily, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                             11.0f * scale, L"", &state.btnFmt);
+    if (!state.textFmt || !state.btnFmt) {
+        SafeRelease(&state.btnFmt);
+        SafeRelease(&state.textFmt);
+        return false;
+    }
+    if (state.btnFmt) {
+        state.btnFmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        state.btnFmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+
+    HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, cls, L"",
+                                WS_POPUP, 0, 0, state.w, state.h,
+                                owner, nullptr, GetModuleHandleW(nullptr), &state);
+    if (!hwnd) {
+        SafeRelease(&state.btnFmt);
+        SafeRelease(&state.textFmt);
+        return false;
+    }
+    ApplyPopupRoundShape(hwnd, state.w, state.h, DpiPx(owner, 16));
+
+    D2D1_SIZE_U sz = D2D1::SizeU(state.w, state.h);
+    if (FAILED(d2dFactory->CreateHwndRenderTarget(D2D1::RenderTargetProperties(),
+                                                   D2D1::HwndRenderTargetProperties(hwnd, sz),
+                                                   &state.rt))) {
+        DestroyWindow(hwnd);
+        return false;
+    }
+    state.rt->SetDpi(96.0f, 96.0f);
+    if (FAILED(state.rt->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), &state.brush))) {
+        DestroyWindow(hwnd);
+        return false;
+    }
+
+    CenterWindowOverOwner(hwnd, owner);
+    EnableWindow(owner, FALSE);
+    ShowWindow(hwnd, SW_SHOW);
+    SetForegroundWindow(hwnd);
+    if (state.edit) {
+        SetFocus(state.edit);
+        SendMessageW(state.edit, EM_SETSEL, 0, -1);
+    }
+
+    MSG msg{};
+    BOOL got = TRUE;
+    while (!state.done && (got = GetMessageW(&msg, nullptr, 0, 0)) > 0) {
+        if (msg.hwnd == state.edit && msg.message == WM_KEYDOWN) {
+            if (msg.wParam == VK_RETURN) { EndPrompt(&state, true); continue; }
+            if (msg.wParam == VK_ESCAPE) { EndPrompt(&state, false); continue; }
+        }
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    if (got == 0) PostQuitMessage((int)msg.wParam);
+
+    if (IsWindow(hwnd)) DestroyWindow(hwnd);
+    EnableWindow(owner, TRUE);
+    SetForegroundWindow(owner);
+    if (state.result) value = state.value;
     return state.result;
 }
 
@@ -764,6 +1087,26 @@ void AppendThemeMenu(std::vector<PopupMenuItem>& items, Lang lang,
     }
     items.push_back(PopupMenuItem{ kCmdThemeManager, T(Str::ThemeCustom, lang), false, false, false, true, 1 });
 }
+
+void AppendListMenu(std::vector<PopupMenuItem>& items, const TodoModel& model, Lang lang) {
+    items.push_back(PopupMenuItem{ 0, T(Str::ListHeader, lang), false, false, false, true, 0, true });
+    const int shown = model.ListCount() < 16 ? model.ListCount() : 16;
+    for (int i = 0; i < shown; ++i) {
+        const TodoList* list = model.ListAt(i);
+        if (!list) continue;
+        std::wstring label = list->title;
+        if (list->activeCount > 0)
+            label += L" (" + std::to_wstring(list->activeCount) + L")";
+        items.push_back(PopupMenuItem{ kCmdListBase + (UINT)i, label, false,
+                                       i == model.CurrentListIndex(), false, true, 1 });
+    }
+    if (model.ListCount() > shown)
+        items.push_back(PopupMenuItem{ 0, L"...", false, false, false, false, 1 });
+    items.push_back(PopupMenuItem{ kCmdListNew, T(Str::ListNew, lang), false, false, false, true, 1 });
+    items.push_back(PopupMenuItem{ kCmdListRename, T(Str::ListRename, lang), false, false, false, true, 1 });
+    items.push_back(PopupMenuItem{ kCmdListDelete, T(Str::ListDelete, lang), false, false, true,
+                                   model.ListCount() > 1, 1 });
+}
 } // namespace
 
 // ——————————————————————————— 生命周期 ———————————————————————————
@@ -891,6 +1234,7 @@ void MainWindow::ApplyResolvedTheme(bool persist) {
         InvalidateRect(edit_, nullptr, TRUE);
 
     UpdateLayeredState();        // Slim 胶囊透明度使用新主题 slimAlpha
+    RefreshTrayIcon();           // 按主题重建托盘图标
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
     if (persist) ScheduleSave();
 }
@@ -1261,9 +1605,80 @@ void MainWindow::Resize(UINT w, UINT h) {
 HICON MainWindow::CreateTrayIconHandle() {
     int cx = GetSystemMetrics(SM_CXSMICON);
     int cy = GetSystemMetrics(SM_CYSMICON);
-    if (cx <= 0) cx = 32;
-    if (cy <= 0) cy = 32;
-    return LoadOwnedAppIcon(cx, cy);
+    if (cx <= 0) cx = 16;
+    if (cy <= 0) cy = 16;
+
+    HDC screen = GetDC(nullptr);
+    if (!screen) return LoadOwnedAppIcon(cx, cy);
+    HDC memDC = CreateCompatibleDC(screen);
+    HBITMAP colorBmp = CreateCompatibleBitmap(screen, cx, cy);
+    ReleaseDC(nullptr, screen);
+    if (!memDC || !colorBmp) {
+        if (colorBmp) DeleteObject(colorBmp);
+        if (memDC) DeleteDC(memDC);
+        return LoadOwnedAppIcon(cx, cy);
+    }
+    HGDIOBJ oldBmp = SelectObject(memDC, colorBmp);
+
+    RECT rc{ 0, 0, cx, cy };
+    HBRUSH bg = CreateSolidBrush(Theme::GdiColor(theme_.tray.background));
+    ::FillRect(memDC, &rc, bg);
+    DeleteObject(bg);
+
+    HPEN edgePen = CreatePen(PS_SOLID, 1, Theme::GdiColor(theme_.tray.edge));
+    HGDIOBJ oldBrush = SelectObject(memDC, GetStockObject(NULL_BRUSH));
+    HGDIOBJ oldPen = SelectObject(memDC, edgePen);
+    int radius = cx / 4;
+    RoundRect(memDC, 0, 0, cx, cy, radius, radius);
+    SelectObject(memDC, oldPen);
+    SelectObject(memDC, oldBrush);
+    DeleteObject(edgePen);
+
+    HPEN markPen = CreatePen(PS_SOLID, 1, Theme::GdiColor(theme_.tray.mark));
+    HGDIOBJ oldMarkPen = SelectObject(memDC, markPen);
+    int mx = cx / 4;
+    int mw = cx - cx / 2;
+    for (int i = 0; i < 3; i++) {
+        int my = cy / 3 + i * (cy / 6);
+        if (my >= cy - 1) break;
+        MoveToEx(memDC, mx, my, nullptr);
+        LineTo(memDC, mx + mw, my);
+    }
+    SelectObject(memDC, oldMarkPen);
+    DeleteObject(markPen);
+
+    if (model_.TotalActiveCount() > 0) {
+        HBRUSH badgeBrush = CreateSolidBrush(Theme::GdiColor(theme_.tray.badge));
+        HGDIOBJ oldBadgeBrush = SelectObject(memDC, badgeBrush);
+        HGDIOBJ oldBadgePen = SelectObject(memDC, GetStockObject(NULL_PEN));
+        int d = cx * 5 / 12;
+        Ellipse(memDC, cx - d, 0, cx, d);
+        SelectObject(memDC, oldBadgePen);
+        SelectObject(memDC, oldBadgeBrush);
+        DeleteObject(badgeBrush);
+    }
+
+    SelectObject(memDC, oldBmp);
+    DeleteDC(memDC);
+
+    int maskStride = ((cx + 15) / 16) * 2;
+    std::vector<BYTE> maskBits((size_t)maskStride * cy, 0);
+    HBITMAP maskBmp = CreateBitmap(cx, cy, 1, 1, maskBits.data());
+    if (!maskBmp) {
+        DeleteObject(colorBmp);
+        return LoadOwnedAppIcon(cx, cy);
+    }
+
+    ICONINFO ii{};
+    ii.fIcon = TRUE;
+    ii.hbmColor = colorBmp;
+    ii.hbmMask = maskBmp;
+    HICON icon = CreateIconIndirect(&ii);
+    DeleteObject(colorBmp);
+    DeleteObject(maskBmp);
+
+    if (!icon) return LoadOwnedAppIcon(cx, cy);
+    return icon;
 }
 
 bool MainWindow::AddTrayIcon() {
@@ -1295,6 +1710,25 @@ void MainWindow::RemoveTrayIcon() {
     }
 }
 
+void MainWindow::RefreshTrayIcon() {
+    if (!trayAdded_) return;
+    HICON icon = CreateTrayIconHandle();
+    if (!icon) {
+        themeNotices_.push_back({ lang_ == Lang::Zh ? L"托盘图标生成失败" : L"Tray icon generation failed" });
+        return;
+    }
+
+    HICON old = nid_.hIcon;
+    nid_.hIcon = icon;
+    if (Shell_NotifyIconW(NIM_MODIFY, &nid_)) {
+        if (old) DestroyIcon(old);
+    } else {
+        nid_.hIcon = old;
+        DestroyIcon(icon);
+        themeNotices_.push_back({ lang_ == Lang::Zh ? L"托盘图标更新失败" : L"Tray icon update failed" });
+    }
+}
+
 void MainWindow::HandleMenuCommand(UINT cmd) {
     switch (cmd) {
         case 1:  Show();                              break;
@@ -1309,7 +1743,15 @@ void MainWindow::HandleMenuCommand(UINT cmd) {
         case 20: SetLanguage(lang_ == Lang::Zh ? Lang::En : Lang::Zh); break;
         default:
             // 主题命令分区（1000..1999）
-            if (cmd == kCmdThemeFollowSystem) {
+            if (cmd >= kCmdListBase && cmd < kCmdListBase + 200) {
+                SwitchList((int)(cmd - kCmdListBase));
+            } else if (cmd == kCmdListNew) {
+                CreateList();
+            } else if (cmd == kCmdListRename) {
+                RenameCurrentList();
+            } else if (cmd == kCmdListDelete) {
+                DeleteCurrentListConfirm();
+            } else if (cmd == kCmdThemeFollowSystem) {
                 SetThemeMode("follow_system");
             } else if (cmd == kCmdThemeManager) {
                 ShowThemeManager();
@@ -1334,6 +1776,10 @@ void MainWindow::ShowTrayMenu() {
     std::vector<PopupMenuItem> items{
         PopupMenuItem{ 1, T(Str::Show, lang_) },
         PopupMenuItem{ 0, L"", true },
+    };
+    AppendListMenu(items, model_, lang_);
+    items.insert(items.end(), {
+        PopupMenuItem{ 0, L"", true },
         PopupMenuItem{ 10, T(Str::ModeNormal, lang_), false, mountMode_ == MountMode::Normal },
         PopupMenuItem{ 11, T(Str::ModeDesktop, lang_), false, mountMode_ == MountMode::Desktop },
         PopupMenuItem{ 0, T(Str::ModeCapsule, lang_), false, false, false, false },
@@ -1344,7 +1790,7 @@ void MainWindow::ShowTrayMenu() {
         PopupMenuItem{ 2, T(Str::Autostart, lang_), false, Autostart::IsEnabled() },
         PopupMenuItem{ 0, L"", true },
         PopupMenuItem{ 3, T(Str::Exit, lang_), false, false, true },
-    };
+    });
 
     POINT pt;
     GetCursorPos(&pt);
@@ -1358,7 +1804,10 @@ void MainWindow::ShowTrayMenu() {
 
 void MainWindow::ShowTitleMenu() {
     const bool inCapsule = mountMode_ == MountMode::Capsule;
-    std::vector<PopupMenuItem> items{
+    std::vector<PopupMenuItem> items;
+    AppendListMenu(items, model_, lang_);
+    items.insert(items.end(), {
+        PopupMenuItem{ 0, L"", true },
         PopupMenuItem{ 10, T(Str::ModeNormal, lang_), false, mountMode_ == MountMode::Normal },
         PopupMenuItem{ 11, T(Str::ModeDesktop, lang_), false, mountMode_ == MountMode::Desktop },
         PopupMenuItem{ 0, T(Str::ModeCapsule, lang_), false, false, false, false },
@@ -1369,7 +1818,7 @@ void MainWindow::ShowTitleMenu() {
         PopupMenuItem{ 2, T(Str::Autostart, lang_), false, Autostart::IsEnabled() },
         PopupMenuItem{ 0, L"", true },
         PopupMenuItem{ 3, T(Str::Exit, lang_), false, false, true },
-    };
+    });
 
     RECT rc{};
     GetClientRect(hwnd_, &rc);
@@ -1400,6 +1849,73 @@ void MainWindow::SetLanguage(Lang lang) {
     lang_ = lang;
     ui_.lang = (lang == Lang::Zh) ? "zh" : "en";
     RebuildLayout();
+    ScheduleSave();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void MainWindow::SwitchList(int index) {
+    if (index == model_.CurrentListIndex()) return;
+    if (editing()) CommitEdit(false);
+    if (!model_.SetCurrentListIndex(index)) return;
+    scroll_ = 0.0f;
+    hoverRow_ = -1;
+    dragging_ = false;
+    dragFrom_ = dragInsert_ = -1;
+    RebuildLayout();
+    ClampScroll();
+    ScheduleSave();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void MainWindow::CreateList() {
+    if (editing()) CommitEdit(false);
+    std::wstring title = T(Str::ListDefault, lang_);
+    if (model_.ListCount() > 0)
+        title += L" " + std::to_wstring(model_.ListCount() + 1);
+    if (!PromptText(T(Str::ListNamePrompt, lang_), title)) return;
+
+    model_.AddList(title);
+    scroll_ = 0.0f;
+    hoverRow_ = -1;
+    dragging_ = false;
+    dragFrom_ = dragInsert_ = -1;
+    RebuildLayout();
+    ClampScroll();
+    ScheduleSave();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void MainWindow::RenameCurrentList() {
+    if (editing()) CommitEdit(false);
+    std::wstring title = model_.CurrentList().title;
+    if (!PromptText(T(Str::ListNamePrompt, lang_), title)) return;
+    model_.RenameCurrentList(title);
+    RebuildLayout();
+    ScheduleSave();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void MainWindow::DeleteCurrentListConfirm() {
+    if (model_.ListCount() <= 1) return;
+    if (editing()) CommitEdit(false);
+
+    const TodoList& list = model_.CurrentList();
+    const int total = static_cast<int>(list.items.size());
+    if (total > 0) {
+        std::wstring msg = (lang_ == Lang::Zh)
+            ? (L"删除“" + list.title + L"”？其中 " + std::to_wstring(total) + L" 条内容也会删除。")
+            : (L"Delete \"" + list.title + L"\" and its " + std::to_wstring(total) + L" items?");
+        if (!ConfirmText(msg, true)) return;
+    }
+
+    model_.DeleteCurrentList();
+    scroll_ = 0.0f;
+    hoverRow_ = -1;
+    dragging_ = false;
+    dragFrom_ = dragInsert_ = -1;
+    RebuildLayout();
+    ClampScroll();
+    RefreshTrayIcon();
     ScheduleSave();
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
@@ -1725,7 +2241,7 @@ void MainWindow::TogglePin() {
 }
 
 void MainWindow::ToggleCompletedExpanded() {
-    ui_.completedExpanded = !ui_.completedExpanded;
+    model_.SetCurrentCompletedExpanded(!model_.CurrentList().completedExpanded);
     RebuildLayout();
     ClampScroll();
     ScheduleSave();
@@ -1741,11 +2257,23 @@ bool MainWindow::Confirm(Str message, UINT icon) {
     return ShowThemedConfirm(hwnd_, T(message, lang_), lang_, true, theme_, d2dFactory_, dwrite_);
 }
 
+bool MainWindow::ConfirmText(const std::wstring& message, bool danger) {
+    return ShowThemedConfirm(hwnd_, message.c_str(), lang_, danger, theme_, d2dFactory_, dwrite_);
+}
+
+bool MainWindow::PromptText(const std::wstring& prompt, std::wstring& value) {
+    if (!ShowThemedTextPrompt(hwnd_, prompt.c_str(), value, lang_, theme_, d2dFactory_, dwrite_))
+        return false;
+    value = NormalizeSingleLineText(std::move(value));
+    return !value.empty();
+}
+
 void MainWindow::DeleteItem(int itemIndex) {
     if (editing() && editIndex_ == itemIndex) CancelEdit();
     model_.Remove(itemIndex);
     RebuildLayout();
     ClampScroll();
+    RefreshTrayIcon();
     ScheduleSave();
     InvalidateRect(hwnd_, nullptr, FALSE);
 }

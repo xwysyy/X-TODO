@@ -14,6 +14,12 @@ const wchar_t* T(Str key, Lang lang) {
         case Str::ToggleLang:    return zh ? L"English"         : L"中文"; // 显示可切换到的目标语言
         case Str::Exit:          return zh ? L"退出"            : L"Exit";
         case Str::NewItem:       return zh ? L"＋ 新增一条"     : L"＋ New item";
+        case Str::ListHeader:    return zh ? L"标签页"          : L"Lists";
+        case Str::ListNew:       return zh ? L"新建标签页"      : L"New list";
+        case Str::ListRename:    return zh ? L"重命名当前标签"  : L"Rename current list";
+        case Str::ListDelete:    return zh ? L"删除当前标签"    : L"Delete current list";
+        case Str::ListNamePrompt:return zh ? L"标签页名称"      : L"List name";
+        case Str::ListDefault:   return zh ? L"默认"            : L"Inbox";
         case Str::Completed:     return zh ? L"已完成"          : L"Completed";
         case Str::Clear:         return zh ? L"清空"            : L"Clear";
         case Str::DeleteItemMsg: return zh ? L"删除这一条？"    : L"Delete this item?";

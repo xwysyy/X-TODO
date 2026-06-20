@@ -71,13 +71,13 @@ std::wstring MakeBreakableText(const std::wstring& text) {
 
 // ——————————————————————————— 布局 ———————————————————————————
 
-float MainWindow::ContentTop() const { return S(Theme::kTitleH); }
+float MainWindow::ContentTop() const { return S(Theme::kTitleH + Theme::kTabsH); }
 float MainWindow::ContentHeight() const { return contentH_; }
 
 float MainWindow::ViewportHeight() const {
     RECT rc;
     GetClientRect(hwnd_, &rc);
-    float h = (float)(rc.bottom - rc.top) - S(Theme::kTitleH) - S(Theme::kFooterH);
+    float h = (float)(rc.bottom - rc.top) - ContentTop() - S(Theme::kFooterH);
     return h < 0 ? 0 : h;
 }
 
@@ -104,6 +104,8 @@ void MainWindow::RebuildLayout() {
     for (auto& r : rows_) // 释放上一轮缓存的删除线布局，避免泄漏
         if (r.strikeLayout) { r.strikeLayout->Release(); r.strikeLayout = nullptr; }
     rows_.clear();
+    listTabs_.clear();
+    addListRect_ = D2D1::RectF(0, 0, 0, 0);
 
     RECT rc;
     GetClientRect(hwnd_, &rc);
@@ -154,7 +156,7 @@ void MainWindow::RebuildLayout() {
         sectionRect_ = D2D1::RectF(pad, docY, W - pad, docY + S(Theme::kSectionH));
         clearRect_   = D2D1::RectF(W - pad - S(44), docY, W - pad, docY + S(Theme::kSectionH));
         docY += S(Theme::kSectionH);
-        if (ui_.completedExpanded)
+        if (model_.CurrentList().completedExpanded)
             for (int i = active; i < total; i++) makeRow(i, true);
     } else {
         sectionRect_ = D2D1::RectF(0, 0, 0, 0);
@@ -169,6 +171,36 @@ void MainWindow::RebuildLayout() {
     pinRect_   = D2D1::RectF(closeRect_.left - S(4) - btn, ty, closeRect_.left - S(4), ty + btn);
     themeRect_ = D2D1::RectF(pinRect_.left - S(4) - btn, ty, pinRect_.left - S(4), ty + btn);
     menuRect_  = D2D1::RectF(themeRect_.left - S(4) - btn, ty, themeRect_.left - S(4), ty + btn);
+
+    // 多列表标签栏（固定客户坐标）
+    const float tabTop = S(Theme::kTitleH);
+    const float tabsH = S(Theme::kTabsH);
+    const float addSize = S(24);
+    const float tabGap = S(6);
+    addListRect_ = D2D1::RectF(W - pad - addSize, tabTop + (tabsH - addSize) / 2.0f,
+                               W - pad, tabTop + (tabsH + addSize) / 2.0f);
+    float x = pad;
+    const float maxRight = addListRect_.left - tabGap;
+    const float tabMinW = S(52);
+    const float tabMaxW = S(118);
+    const float tabH = S(28);
+    const float tabY = tabTop + (tabsH - tabH) / 2.0f;
+    for (int i = 0; i < model_.ListCount(); ++i) {
+        const TodoList* list = model_.ListAt(i);
+        if (!list) continue;
+        wchar_t countBuf[16];
+        swprintf_s(countBuf, L"%d", list->activeCount);
+        const float titleW = S(7.0f) * (float)list->title.size();
+        const float countW = list->activeCount > 0
+            ? S(15.0f + 6.0f * (float)wcslen(countBuf))
+            : 0.0f;
+        float wantW = S(20) + titleW + (countW > 0.0f ? S(7) + countW : 0.0f);
+        if (wantW < tabMinW) wantW = tabMinW;
+        if (wantW > tabMaxW) wantW = tabMaxW;
+        if (x + wantW > maxRight) break;
+        listTabs_.push_back(ListTabLayout{ i, D2D1::RectF(x, tabY, x + wantW, tabY + tabH) });
+        x += wantW + tabGap;
+    }
 }
 
 float MainWindow::MeasureRowHeight(const std::wstring& text, float textWidth) {
@@ -202,6 +234,17 @@ MainWindow::Hit MainWindow::HitTest(float x, float y) {
         if (InRect(pinRect_, p))   { h.kind = HitKind::Pin;   return h; }
         if (InRect(closeRect_, p)) { h.kind = HitKind::Close; return h; }
         return h; // 标题栏空白 -> 交给 NCHITTEST 拖动
+    }
+    if (y < ContentTop()) {
+        if (InRect(addListRect_, p)) { h.kind = HitKind::AddList; return h; }
+        for (const ListTabLayout& tab : listTabs_) {
+            if (InRect(tab.rect, p)) {
+                h.kind = HitKind::ListTab;
+                h.itemIndex = tab.listIndex;
+                return h;
+            }
+        }
+        return h;
     }
 
     float docY = y - ContentTop() + scroll_;
@@ -326,7 +369,7 @@ void MainWindow::DrawSection() {
 
     wchar_t buf[96];
     swprintf_s(buf, L"%s (%d) %s", T(Str::Completed, lang_), model_.CompletedCount(),
-               ui_.completedExpanded ? L"▾" : L"▸");
+               model_.CurrentList().completedExpanded ? L"▾" : L"▸");
     D2D1_RECT_F lr = sectionRect_;
     lr.left += S(2);
     Text(buf, lr, theme_.colors.textWeak, smallFormat_);
@@ -350,14 +393,26 @@ void MainWindow::DrawTitleBar() {
 
     D2D1_POINT_2F tc = D2D1::Point2F((themeRect_.left + themeRect_.right) / 2,
                                      (themeRect_.top + themeRect_.bottom) / 2);
-    D2D1_ELLIPSE te = D2D1::Ellipse(tc, S(6), S(6));
-    brush_->SetColor(Theme::D2DColor(theme_.colors.checkFill));
-    rt_->FillEllipse(te, brush_);
+    D2D1_ELLIPSE palette = D2D1::Ellipse(D2D1::Point2F(tc.x - S(0.4f), tc.y), S(6.4f), S(5.4f));
+    brush_->SetColor(Theme::D2DColor(theme_.colors.paperElevated));
+    rt_->FillEllipse(palette, brush_);
+    brush_->SetColor(Theme::D2DColor(theme_.colors.textWeak));
+    rt_->DrawEllipse(palette, brush_, S(1.2f));
+
+    auto swatch = [&](float dx, float dy, float radius, uint32_t color) {
+        brush_->SetColor(Theme::D2DColor(color));
+        rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(tc.x + S(dx), tc.y + S(dy)),
+                                       S(radius), S(radius)), brush_);
+    };
+    swatch(-3.1f, -1.7f, 1.15f, theme_.colors.checkFill);
+    swatch(-0.6f, -2.5f, 1.05f, theme_.colors.danger);
+    swatch(-2.2f,  1.3f, 1.05f, theme_.colors.handleHover);
+
+    D2D1_ELLIPSE hole = D2D1::Ellipse(D2D1::Point2F(tc.x + S(3.0f), tc.y + S(1.4f)), S(1.55f), S(1.35f));
+    brush_->SetColor(Theme::D2DColor(theme_.colors.paper));
+    rt_->FillEllipse(hole, brush_);
     brush_->SetColor(Theme::D2DColor(theme_.colors.paperEdge));
-    rt_->DrawEllipse(te, brush_, S(1.2f));
-    brush_->SetColor(Theme::D2DColor(theme_.colors.checkMark));
-    rt_->DrawLine(D2D1::Point2F(tc.x - S(3), tc.y + S(1)),
-                  D2D1::Point2F(tc.x + S(3), tc.y - S(3)), brush_, S(1.3f));
+    rt_->DrawEllipse(hole, brush_, S(0.9f));
 
     D2D1_POINT_2F pc = D2D1::Point2F((pinRect_.left + pinRect_.right) / 2,
                                      (pinRect_.top + pinRect_.bottom) / 2);
@@ -375,6 +430,76 @@ void MainWindow::DrawTitleBar() {
     float p = S(7);
     rt_->DrawLine(D2D1::Point2F(c.left + p, c.top + p), D2D1::Point2F(c.right - p, c.bottom - p), brush_, S(1.6f));
     rt_->DrawLine(D2D1::Point2F(c.right - p, c.top + p), D2D1::Point2F(c.left + p, c.bottom - p), brush_, S(1.6f));
+}
+
+void MainWindow::DrawListTabs() {
+    const float tabTop = S(Theme::kTitleH);
+    const float tabBottom = ContentTop();
+    FillRect(D2D1::RectF(0, tabTop, addListRect_.right + S(Theme::kPadX), tabBottom),
+             theme_.colors.paper);
+
+    const int current = model_.CurrentListIndex();
+    for (const ListTabLayout& tab : listTabs_) {
+        const TodoList* list = model_.ListAt(tab.listIndex);
+        if (!list) continue;
+
+        const bool selected = tab.listIndex == current;
+        const D2D1_ROUNDED_RECT rr{ tab.rect, S(8), S(8) };
+        if (selected) {
+            brush_->SetColor(Theme::D2DColor(theme_.colors.paperElevated));
+            rt_->FillRoundedRectangle(rr, brush_);
+            brush_->SetColor(Theme::D2DColor(theme_.colors.paperEdge));
+            rt_->DrawLine(D2D1::Point2F(tab.rect.left + S(8), tab.rect.top + S(0.5f)),
+                          D2D1::Point2F(tab.rect.right - S(8), tab.rect.top + S(0.5f)), brush_, S(1));
+            rt_->DrawLine(D2D1::Point2F(tab.rect.left + S(0.5f), tab.rect.top + S(8)),
+                          D2D1::Point2F(tab.rect.left + S(0.5f), tab.rect.bottom - S(6)), brush_, S(1));
+            rt_->DrawLine(D2D1::Point2F(tab.rect.right - S(0.5f), tab.rect.top + S(8)),
+                          D2D1::Point2F(tab.rect.right - S(0.5f), tab.rect.bottom - S(6)), brush_, S(1));
+        }
+
+        D2D1_RECT_F textR = tab.rect;
+        textR.left += S(10);
+        textR.right -= S(9);
+        if (list->activeCount > 0) textR.right -= S(25);
+        Text(list->title, textR, selected ? theme_.colors.text : theme_.colors.textWeak, smallFormat_);
+
+        if (list->activeCount > 0) {
+            wchar_t countBuf[16];
+            swprintf_s(countBuf, L"%d", list->activeCount);
+            const float pillW = S(15.0f + 6.0f * (float)wcslen(countBuf));
+            const float pillH = S(16);
+            D2D1_RECT_F pill = D2D1::RectF(tab.rect.right - S(8) - pillW,
+                                           tab.rect.top + (tab.rect.bottom - tab.rect.top - pillH) / 2.0f,
+                                           tab.rect.right - S(8),
+                                           tab.rect.top + (tab.rect.bottom - tab.rect.top + pillH) / 2.0f);
+            D2D1_ROUNDED_RECT prr{ pill, pillH / 2.0f, pillH / 2.0f };
+            const uint32_t pillFill = selected
+                ? Theme::Blend(theme_.colors.checkFill, theme_.colors.paperElevated, 0.16f)
+                : Theme::Blend(theme_.colors.checkFill, theme_.colors.paper, 0.10f);
+            brush_->SetColor(Theme::D2DColor(pillFill));
+            rt_->FillRoundedRectangle(prr, brush_);
+            brush_->SetColor(Theme::D2DColor(theme_.colors.checkFill));
+            smallFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            rt_->DrawTextW(countBuf, (UINT32)wcslen(countBuf), smallFormat_, pill, brush_,
+                           D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            smallFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        }
+    }
+
+    if (addListRect_.right > addListRect_.left) {
+        D2D1_ROUNDED_RECT addRR{ addListRect_, S(8), S(8) };
+        brush_->SetColor(Theme::D2DColor(theme_.colors.paperElevated));
+        rt_->FillRoundedRectangle(addRR, brush_);
+        brush_->SetColor(Theme::D2DColor(theme_.colors.paperEdge));
+        rt_->DrawRoundedRectangle(addRR, brush_, S(1));
+
+        const float cx = (addListRect_.left + addListRect_.right) / 2.0f;
+        const float cy = (addListRect_.top + addListRect_.bottom) / 2.0f;
+        const float half = S(5);
+        brush_->SetColor(Theme::D2DColor(theme_.colors.textWeak));
+        rt_->DrawLine(D2D1::Point2F(cx - half, cy), D2D1::Point2F(cx + half, cy), brush_, S(1.5f));
+        rt_->DrawLine(D2D1::Point2F(cx, cy - half), D2D1::Point2F(cx, cy + half), brush_, S(1.5f));
+    }
 }
 
 void MainWindow::DrawAddRow(bool hovered) {
@@ -406,7 +531,7 @@ bool MainWindow::Render() {
     if (capsuleShrunk()) { // 折叠胶囊：按样式绘制
         rt_->BeginDraw();
         rt_->SetTransform(D2D1::Matrix3x2F::Identity());
-        const int n = model_.ActiveCount();
+        const int n = model_.TotalActiveCount();
         rt_->Clear(Theme::D2DColor(theme_.capsule.slimPaper));
         const float radius = W < H ? W * 0.5f : H * 0.5f;
         D2D1_ROUNDED_RECT rr{ D2D1::RectF(0.75f, 0.75f, W - 0.75f, H - 0.75f), radius, radius };
@@ -454,6 +579,7 @@ bool MainWindow::Render() {
 
     // 固定层
     DrawTitleBar();
+    DrawListTabs();
     StrokeRect(D2D1::RectF(0.5f, 0.5f, W - 0.5f, H - 0.5f), theme_.colors.paperEdge, 1.0f);
 
     if (rt_->EndDraw() == (HRESULT)D2DERR_RECREATE_TARGET) {
@@ -472,7 +598,7 @@ bool MainWindow::RenderDotCapsuleLayered() {
     const int h = client.bottom - client.top;
     if (w <= 0 || h <= 0) return false;
 
-    const int n = model_.ActiveCount();
+    const int n = model_.TotalActiveCount();
     const uint32_t rgb = capsuleHover_
         ? (n > 0 ? theme_.capsule.dotActiveHover : theme_.capsule.dotIdleHover)
         : (n > 0 ? theme_.capsule.dotActive : theme_.capsule.dotIdle);
@@ -541,7 +667,7 @@ bool MainWindow::RenderDotCapsuleLayered() {
 void MainWindow::OnLButtonDown(float x, float y) {
     if (animActive_) return;                                     // 动画中忽略点击
     if (capsuleShrunk()) { BeginCapsulePress((int)x, (int)y); return; } // 区分点击展开 / 拖动吸附
-    if (editing()) { CommitEdit(false); return; }
+    if (editing()) CommitEdit(false);
     Hit h = HitTest(x, y);
     pressHit_ = h;
     if (h.kind == HitKind::Handle) {
@@ -579,6 +705,7 @@ void MainWindow::OnLButtonUp(float x, float y) {
         model_.SetDone(h.itemIndex, !model_.Items()[h.itemIndex].done);
         RebuildLayout();
         ClampScroll();
+        RefreshTrayIcon();
         ScheduleSave();
         break;
     case HitKind::Text:
@@ -590,6 +717,8 @@ void MainWindow::OnLButtonUp(float x, float y) {
         break;
     case HitKind::Section: ToggleCompletedExpanded(); break;
     case HitKind::Clear:   ClearCompletedConfirm();   break;
+    case HitKind::ListTab: SwitchList(h.itemIndex);   break;
+    case HitKind::AddList: CreateList();              break;
     case HitKind::Menu:    ShowTitleMenu();           break;
     case HitKind::Theme:   ShowThemeMenu();           break;
     case HitKind::Pin:     TogglePin();               break;
@@ -598,6 +727,7 @@ void MainWindow::OnLButtonUp(float x, float y) {
         int n = model_.AddActive(L"");
         RebuildLayout();
         ScrollItemIntoView(n);
+        RefreshTrayIcon();
         BeginEdit(n);
         break;
     }
@@ -723,12 +853,14 @@ void MainWindow::CommitEdit(bool addNext) {
     else              model_.SetText(idx, text);
 
     RebuildLayout();
+    RefreshTrayIcon();
     ScheduleSave();
 
     if (addNext && !text.empty()) {
         int n = model_.AddActive(L"");
         RebuildLayout();
         ScrollItemIntoView(n);
+        RefreshTrayIcon();
         BeginEdit(n);
     } else {
         ClampScroll();
@@ -749,6 +881,7 @@ void MainWindow::CancelEdit() {
         model_.Remove(idx);
 
     RebuildLayout();
+    RefreshTrayIcon();
     ClampScroll();
     SetFocus(hwnd_);
     MaybeCollapseCapsule(); // 取消编辑后，鼠标已在外则收回胶囊

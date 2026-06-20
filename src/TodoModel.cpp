@@ -126,21 +126,6 @@ bool TodoModel::SetCurrentListId(const std::string& id) {
     return false;
 }
 
-void TodoModel::RenameCurrentList(const std::wstring& title) {
-    if (title.empty()) return;
-    CurrentListMutable().title = title;
-}
-
-bool TodoModel::DeleteCurrentList() {
-    EnsureList();
-    if (lists_.size() <= 1) return false;
-    lists_.erase(lists_.begin() + currentList_);
-    if (currentList_ >= static_cast<int>(lists_.size()))
-        currentList_ = static_cast<int>(lists_.size()) - 1;
-    EnsureList();
-    return true;
-}
-
 void TodoModel::SetCurrentCompletedExpanded(bool expanded) {
     CurrentListMutable().completedExpanded = expanded;
 }

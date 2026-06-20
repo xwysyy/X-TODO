@@ -38,10 +38,6 @@ constexpr UINT kCmdThemeFollowSystem = 1000;
 constexpr UINT kCmdThemeBuiltinBase  = 1100; // + 内置主题索引
 constexpr UINT kCmdThemeCustomBase   = 1300; // + 自定义主题索引
 constexpr UINT kCmdThemeManager      = 1900;
-constexpr UINT kCmdListBase          = 2100; // + 列表索引
-constexpr UINT kCmdListNew           = 2500;
-constexpr UINT kCmdListRename        = 2501;
-constexpr UINT kCmdListDelete        = 2502;
 
 template <class T> void SafeRelease(T** p) {
     if (*p) { (*p)->Release(); *p = nullptr; }
@@ -1101,25 +1097,6 @@ void AppendThemeMenu(std::vector<PopupMenuItem>& items, Lang lang,
     items.push_back(PopupMenuItem{ kCmdThemeManager, T(Str::ThemeCustom, lang), false, false, false, true, 1 });
 }
 
-void AppendListMenu(std::vector<PopupMenuItem>& items, const TodoModel& model, Lang lang) {
-    items.push_back(PopupMenuItem{ 0, T(Str::ListHeader, lang), false, false, false, true, 0, true });
-    const int shown = model.ListCount() < 16 ? model.ListCount() : 16;
-    for (int i = 0; i < shown; ++i) {
-        const TodoList* list = model.ListAt(i);
-        if (!list) continue;
-        std::wstring label = list->title;
-        if (list->activeCount > 0)
-            label += L" (" + std::to_wstring(list->activeCount) + L")";
-        items.push_back(PopupMenuItem{ kCmdListBase + (UINT)i, label, false,
-                                       i == model.CurrentListIndex(), false, true, 1 });
-    }
-    if (model.ListCount() > shown)
-        items.push_back(PopupMenuItem{ 0, L"...", false, false, false, false, 1 });
-    items.push_back(PopupMenuItem{ kCmdListNew, T(Str::ListNew, lang), false, false, false, true, 1 });
-    items.push_back(PopupMenuItem{ kCmdListRename, T(Str::ListRename, lang), false, false, false, true, 1 });
-    items.push_back(PopupMenuItem{ kCmdListDelete, T(Str::ListDelete, lang), false, false, true,
-                                   model.ListCount() > 1, 1 });
-}
 } // namespace
 
 // ——————————————————————————— 生命周期 ———————————————————————————
@@ -1685,15 +1662,7 @@ void MainWindow::HandleMenuCommand(UINT cmd) {
         case 20: SetLanguage(lang_ == Lang::Zh ? Lang::En : Lang::Zh); break;
         default:
             // 主题命令分区（1000..1999）
-            if (cmd >= kCmdListBase && cmd < kCmdListBase + 200) {
-                SwitchList((int)(cmd - kCmdListBase));
-            } else if (cmd == kCmdListNew) {
-                CreateList();
-            } else if (cmd == kCmdListRename) {
-                RenameCurrentList();
-            } else if (cmd == kCmdListDelete) {
-                DeleteCurrentListConfirm();
-            } else if (cmd == kCmdThemeFollowSystem) {
+            if (cmd == kCmdThemeFollowSystem) {
                 SetThemeMode("follow_system");
             } else if (cmd == kCmdThemeManager) {
                 ShowThemeManager();
@@ -1718,10 +1687,6 @@ void MainWindow::ShowTrayMenu() {
     std::vector<PopupMenuItem> items{
         PopupMenuItem{ 1, T(Str::Show, lang_) },
         PopupMenuItem{ 0, L"", true },
-    };
-    AppendListMenu(items, model_, lang_);
-    items.insert(items.end(), {
-        PopupMenuItem{ 0, L"", true },
         PopupMenuItem{ 10, T(Str::ModeNormal, lang_), false, mountMode_ == MountMode::Normal },
         PopupMenuItem{ 11, T(Str::ModeDesktop, lang_), false, mountMode_ == MountMode::Desktop },
         PopupMenuItem{ 0, T(Str::ModeCapsule, lang_), false, false, false, false },
@@ -1732,7 +1697,7 @@ void MainWindow::ShowTrayMenu() {
         PopupMenuItem{ 2, T(Str::Autostart, lang_), false, Autostart::IsEnabled() },
         PopupMenuItem{ 0, L"", true },
         PopupMenuItem{ 3, T(Str::Exit, lang_), false, false, true },
-    });
+    };
 
     POINT pt;
     GetCursorPos(&pt);
@@ -1746,10 +1711,7 @@ void MainWindow::ShowTrayMenu() {
 
 void MainWindow::ShowTitleMenu() {
     const bool inCapsule = mountMode_ == MountMode::Capsule;
-    std::vector<PopupMenuItem> items;
-    AppendListMenu(items, model_, lang_);
-    items.insert(items.end(), {
-        PopupMenuItem{ 0, L"", true },
+    std::vector<PopupMenuItem> items{
         PopupMenuItem{ 10, T(Str::ModeNormal, lang_), false, mountMode_ == MountMode::Normal },
         PopupMenuItem{ 11, T(Str::ModeDesktop, lang_), false, mountMode_ == MountMode::Desktop },
         PopupMenuItem{ 0, T(Str::ModeCapsule, lang_), false, false, false, false },
@@ -1760,7 +1722,7 @@ void MainWindow::ShowTitleMenu() {
         PopupMenuItem{ 2, T(Str::Autostart, lang_), false, Autostart::IsEnabled() },
         PopupMenuItem{ 0, L"", true },
         PopupMenuItem{ 3, T(Str::Exit, lang_), false, false, true },
-    });
+    };
 
     RECT rc{};
     GetClientRect(hwnd_, &rc);
@@ -1823,41 +1785,6 @@ void MainWindow::CreateList() {
     dragFrom_ = dragInsert_ = -1;
     RebuildLayout();
     ClampScroll();
-    ScheduleSave();
-    InvalidateRect(hwnd_, nullptr, FALSE);
-}
-
-void MainWindow::RenameCurrentList() {
-    if (editing()) CommitEdit(false);
-    std::wstring title = model_.CurrentList().title;
-    if (!PromptText(T(Str::ListNamePrompt, lang_), title)) return;
-    model_.RenameCurrentList(title);
-    RebuildLayout();
-    ScheduleSave();
-    InvalidateRect(hwnd_, nullptr, FALSE);
-}
-
-void MainWindow::DeleteCurrentListConfirm() {
-    if (model_.ListCount() <= 1) return;
-    if (editing()) CommitEdit(false);
-
-    const TodoList& list = model_.CurrentList();
-    const int total = static_cast<int>(list.items.size());
-    if (total > 0) {
-        std::wstring msg = (lang_ == Lang::Zh)
-            ? (L"删除“" + list.title + L"”？其中 " + std::to_wstring(total) + L" 条内容也会删除。")
-            : (L"Delete \"" + list.title + L"\" and its " + std::to_wstring(total) + L" items?");
-        if (!ConfirmText(msg, true)) return;
-    }
-
-    model_.DeleteCurrentList();
-    scroll_ = 0.0f;
-    hoverRow_ = -1;
-    dragging_ = false;
-    dragFrom_ = dragInsert_ = -1;
-    RebuildLayout();
-    ClampScroll();
-    RefreshTrayIcon();
     ScheduleSave();
     InvalidateRect(hwnd_, nullptr, FALSE);
 }

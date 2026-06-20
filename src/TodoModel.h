@@ -41,8 +41,6 @@ public:
     int AddList(const std::wstring& title);
     bool SetCurrentListIndex(int index);
     bool SetCurrentListId(const std::string& id);
-    void RenameCurrentList(const std::wstring& title);
-    bool DeleteCurrentList();
     void SetCurrentCompletedExpanded(bool expanded);
 
     void ReplaceAll(std::vector<TodoItem> items, bool completedExpanded = false); // v1 迁移入口

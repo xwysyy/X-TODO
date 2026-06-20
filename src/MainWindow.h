@@ -116,8 +116,6 @@ private:
     void  SetLanguage(Lang lang);
     void  SwitchList(int index);
     void  CreateList();
-    void  RenameCurrentList();
-    void  DeleteCurrentListConfirm();
 
     // —— 主题 ——
     void ReloadThemes();                   // 重扫 %APPDATA%\x-todo\themes\ 自定义主题目录

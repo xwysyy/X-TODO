@@ -94,6 +94,11 @@ menu behavior, check it from the hamburger and the tray icon, not just one.
 Per-menu differences (alignment, item list) belong in `ShowTitleMenu` /
 `ShowTrayMenu`, not in the shared path.
 
+The title-bar menu and tray menu do not carry list or tab management.
+Switching lists and creating a list belong to the main window's tab strip;
+the menu surfaces are for window mode, capsule style, language, autostart,
+theme, and exit commands only.
+
 ### Keep menu hit-testing in lockstep with painting
 
 Symptom: clicking a menu row could select a neighboring row or no row at

@@ -3,7 +3,6 @@
 #include "Theme.h"
 #include "TodoModel.h"
 
-#include <algorithm>
 #include <cwchar>
 
 namespace GuiLayout {
@@ -103,8 +102,10 @@ Gui::Rect ComputeEmptyActivePrompt(float windowWidth, float docY, float viewport
                                    bool listEmpty, float dpiScale) {
     const float pad = S(Theme::kPadX, dpiScale);
     const float top = listEmpty ? docY + S(12.0f, dpiScale) : docY;
+    const float minEmptyHeight = S(112.0f, dpiScale);
+    const float availableEmptyHeight = viewportHeight - S(36.0f, dpiScale);
     const float height = listEmpty
-        ? std::max(S(112.0f, dpiScale), viewportHeight - S(36.0f, dpiScale))
+        ? (availableEmptyHeight > minEmptyHeight ? availableEmptyHeight : minEmptyHeight)
         : S(Theme::kRowH, dpiScale);
     return Gui::Rect{ pad, top, windowWidth - pad, top + height };
 }

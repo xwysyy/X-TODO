@@ -32,6 +32,11 @@ add_xtodo_test(xtodo_model_regression_tests
     ../src/TodoModel.cpp
 )
 
+add_xtodo_test(xtodo_model_property_tests
+    todo_model_property_tests.cpp
+    ../src/TodoModel.cpp
+)
+
 add_xtodo_test(xtodo_store_format_tests
     store_format_tests.cpp
     ../src/StoreFormat.cpp
@@ -39,6 +44,14 @@ add_xtodo_test(xtodo_store_format_tests
     ../src/TodoModel.cpp
 )
 target_include_directories(xtodo_store_format_tests PRIVATE ../third_party)
+
+add_xtodo_test(xtodo_store_format_hardening_tests
+    store_format_hardening_tests.cpp
+    ../src/StoreFormat.cpp
+    ../src/CalendarModel.cpp
+    ../src/TodoModel.cpp
+)
+target_include_directories(xtodo_store_format_hardening_tests PRIVATE ../third_party)
 
 add_xtodo_test(xtodo_theme_tests
     theme_tests.cpp
@@ -66,20 +79,29 @@ add_xtodo_test(xtodo_gui_contract_tests
     ../src/I18n.cpp
 )
 
-add_xtodo_test(xtodo_rendering_policy_tests
-    rendering_policy_tests.cpp
-)
-target_compile_definitions(xtodo_rendering_policy_tests
-    PRIVATE XTODO_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-)
-
 add_xtodo_test(xtodo_calendar_date_tests
     calendar_date_tests.cpp
     ../src/CalendarDate.cpp
 )
 
+add_xtodo_test(xtodo_calendar_date_property_tests
+    calendar_date_property_tests.cpp
+    ../src/CalendarDate.cpp
+)
+
+add_xtodo_test(xtodo_calendar_model_property_tests
+    calendar_model_property_tests.cpp
+    ../src/CalendarModel.cpp
+)
+
 add_xtodo_test(xtodo_calendar_layout_tests
     calendar_layout_tests.cpp
+    ../src/CalendarLayout.cpp
+    ../src/CalendarModel.cpp
+)
+
+add_xtodo_test(xtodo_calendar_layout_property_tests
+    calendar_layout_property_tests.cpp
     ../src/CalendarLayout.cpp
     ../src/CalendarModel.cpp
 )

@@ -186,6 +186,8 @@ bool TodoModel::IndentItemUnder(int index, int parentIndex) {
     int target = current + 1;
     int maxByParent = list.items[(size_t)parentIndex].level + 1;
     if (target > maxByParent) target = maxByParent;
+    int maxByPrevious = list.items[(size_t)index - 1].level + 1;
+    if (target > maxByPrevious) target = maxByPrevious;
     target = ClampTodoLevel(target);
     if (target <= current) return false;
 
@@ -194,6 +196,7 @@ bool TodoModel::IndentItemUnder(int index, int parentIndex) {
     list.items[(size_t)parentIndex].collapsed = false;
     for (int i = index; i < end; ++i)
         list.items[(size_t)i].level = ClampTodoLevel(list.items[(size_t)i].level + delta);
+    NormalizeLevels(list.items, 0, list.activeCount);
     NormalizeCollapsed(list);
     return true;
 }

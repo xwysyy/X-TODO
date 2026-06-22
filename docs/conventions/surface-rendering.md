@@ -37,6 +37,6 @@ A native `EDIT` or other child HWND that shares the frame rect will cover the pa
 
 - Search for framed components built from several border `DrawLine` calls.
 - Search for child controls created with the same rect later used by parent frame painting.
-- Run `xtodo_rendering_policy_tests` when a settings-like popup or
-  `ThemedWindowControls` changes; it blocks GDI drawing tokens in those surfaces.
+- Add or update an executable GUI contract when a settings-like popup or
+  `ThemedWindowControls` exposes reusable layout or drawing policy.
 - Check Windows screenshots at normal DPI and scaled DPI when a new framed component is added.

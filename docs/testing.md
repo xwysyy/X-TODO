@@ -12,11 +12,17 @@ Win32 dependencies so they run in CI on both Linux and Windows.
 | `xtodo_model_tree_tests` | multi-level trees, subtree completion/restore, subtree deletion, drag reordering, indent/outdent, collapse cleanup |
 | `xtodo_model_list_tests` | multi-list isolation, list id generation, current-list selection, rename/delete, per-list completed expansion |
 | `xtodo_model_regression_tests` | regressions from recent git history: insert-after-subtree, completed-block ordering, list deletion selection, id collisions, deterministic invariant fuzzing |
+| `xtodo_model_property_tests` | broad model invariants after long mutation sequences, subtree contracts, `ReplaceLists` idempotence, invalid-operation reference transparency |
 | `xtodo_store_format_tests` | `data.json` round-trip, UTF-8 fidelity, UI-state enum validation and range clamping, malformed/deeply-nested/non-object rejection, calendar normalization, safe defaults on empty input |
+| `xtodo_store_format_hardening_tests` | adversarial persistence coverage for invalid input non-mutation, bracket-depth guard behavior, imported data normalization, unsafe UI fields, rich full-state round-trips |
 | `xtodo_theme_tests` | color helpers, built-in theme catalog stability, contrast thresholds, theme resolution and fallback behavior |
 | `xtodo_i18n_tests` | all declared UI strings in zh/en, important behavioral strings, default language result validity |
 | `xtodo_gui_contract_tests` | headless GUI contracts for non-client hit-testing, geometry capture policy, title/tab/row layout hit-testing, popup menu item models, and inline edit key intents |
-| `xtodo_rendering_policy_tests` | source-level rendering policy checks that block GDI drawing backends in settings-like popup surfaces |
+| `xtodo_calendar_date_tests` | focused Gregorian date parsing, leap-year rules, date arithmetic, weekday, week start, and month-grid anchors |
+| `xtodo_calendar_date_property_tests` | full-cycle Gregorian property coverage for leap years, month lengths, parse/format round-trips, date reversibility, and strict parsing |
+| `xtodo_calendar_model_property_tests` | calendar block ordering, day filtering, range normalization, imported id de-duplication, invalid day rejection, and mutation safety |
+| `xtodo_calendar_layout_tests` | focused calendar header, week, timeline text, lane, and month-grid layout contracts |
+| `xtodo_calendar_layout_property_tests` | responsive calendar layout and hit-testing invariants across widths, DPI scales, day/week/month views, time parsing, snapping, drag ranges, and lane packing |
 
 ## Run with CMake
 
@@ -61,10 +67,11 @@ The native window code must call those modules instead of duplicating the same
 math in `MainWindow.cpp` or `MainWindowView.cpp`; otherwise the headless tests
 are only checking a parallel implementation.
 
-Rendering-backend regressions that cannot be verified by Linux screenshots should
-be covered by `xtodo_rendering_policy_tests`. The settings window, theme manager,
-and `ThemedWindowControls` must not reintroduce GDI double-buffering,
-`RoundRect`, GDI brush/pen drawing, or GDI text measurement for framed popup UI.
+Property and hardening targets should assert durable public behavior: invariants,
+idempotence, non-mutation on failed parses, and deterministic broad input spaces.
+Avoid source-token scanning as a unit-test substitute. Rendering backend changes
+need either a shared executable policy module, a GUI contract, or real rendered
+artifact evidence.
 
 ## CI coverage
 
@@ -82,14 +89,4 @@ g++ -std=c++17 -Wall -Wextra -Wpedantic -I src -I tests \
   src/ViewLayout.cpp src/WindowHitTest.cpp src/I18n.cpp \
   -o /tmp/xtodo_gui_contract_tests
 /tmp/xtodo_gui_contract_tests
-```
-
-The rendering policy target can also run without CMake:
-
-```bash
-g++ -std=c++17 -Wall -Wextra -Wpedantic -I tests \
-  -DXTODO_SOURCE_DIR='"/path/to/X-TODO"' \
-  tests/rendering_policy_tests.cpp \
-  -o /tmp/xtodo_rendering_policy_tests
-/tmp/xtodo_rendering_policy_tests
 ```

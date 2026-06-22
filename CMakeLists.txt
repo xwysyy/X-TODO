@@ -28,6 +28,7 @@ if(XTODO_BUILD_APP)
         src/EditIntent.cpp
         src/GeometryPolicy.cpp
         src/MenuModel.cpp
+        src/SettingsWindow.cpp
         src/ViewLayout.cpp
         src/WindowHitTest.cpp
         src/TodoModel.cpp
@@ -39,6 +40,7 @@ if(XTODO_BUILD_APP)
         src/ThemeCatalog.cpp
         src/ThemeLoader.cpp
         src/ThemeManagerWindow.cpp
+        src/ThemedWindowControls.cpp
         resources/resource.rc
     )
 

@@ -3,13 +3,16 @@
 #include "CalendarTheme.h"
 #include "GeometryPolicy.h"
 #include "MenuModel.h"
+#include "SettingsWindow.h"
 #include "Theme.h"
 #include "ThemeCatalog.h"
 #include "ThemeLoader.h"
 #include "ThemeManagerWindow.h"
 
 #include <windowsx.h>
+#include <shobjidl.h>
 #include <dwmapi.h>
+#include <ctime>
 #include <cwchar>
 #include <utility>
 
@@ -34,6 +37,10 @@ constexpr int kAppIconResourceId = 1; // resources/resource.rc embeds app.ico wi
 
 template <class T> void SafeRelease(T** p) {
     if (*p) { (*p)->Release(); *p = nullptr; }
+}
+
+long long NowEpochSeconds() {
+    return static_cast<long long>(std::time(nullptr));
 }
 
 HICON LoadSharedAppIcon(int cx, int cy) {
@@ -1166,6 +1173,8 @@ bool MainWindow::Create() {
     ApplyResolvedTheme(false);
     AddTrayIcon();
     ApplyMountMode(); // 应用持久化形态（含置顶 / 布局）
+    StartBackupTimer();
+    MaybeRunAutoBackup(false);
 
     if (loadResult == LoadResult::Failed) // 数据读取失败：告知用户（原文件已备份）
         MessageBoxW(hwnd_, T(Str::LoadFailedMsg, lang_), L"X-TODO", MB_OK | MB_ICONWARNING);
@@ -1503,6 +1512,8 @@ LRESULT MainWindow::WndProc(UINT msg, WPARAM wp, LPARAM lp) {
                 if (lbtn) SetTimer(hwnd_, kCollapseTimerId, kCollapseDelayMs, nullptr); // 拖动/缩放中：顺延再判
                 else if (!PtInRect(&wr, cur)) StartCapsuleAnim(false); // 仍在窗口外才收回
             }
+        } else if (wp == kBackupTimerId) {
+            MaybeRunAutoBackup(false);
         }
         return 0;
 
@@ -1671,8 +1682,8 @@ void MainWindow::RefreshTrayIcon() {
 void MainWindow::HandleMenuCommand(UINT cmd) {
     switch (cmd) {
         case GuiMenu::kCmdShow:        Show();                           break;
-        case GuiMenu::kCmdAutostart:   ToggleAutostart();                break;
         case GuiMenu::kCmdExit:        ExitApp();                        break;
+        case GuiMenu::kCmdSettings:    ShowSettings();                   break;
         case GuiMenu::kCmdModeNormal:  SetMountMode(MountMode::Normal);  break;
         case GuiMenu::kCmdModeDesktop: SetMountMode(MountMode::Desktop); break;
         case GuiMenu::kCmdStyleSlim:
@@ -1681,8 +1692,6 @@ void MainWindow::HandleMenuCommand(UINT cmd) {
         case GuiMenu::kCmdStyleDot:
                  SetCapsuleStyle(CapsuleStyle::Dot);
                  if (mountMode_ != MountMode::Capsule) SetMountMode(MountMode::Capsule); break;
-        case GuiMenu::kCmdToggleLang:
-                 SetLanguage(lang_ == Lang::Zh ? Lang::En : Lang::Zh); break;
         default:
             // 主题命令分区（1000..1999）
             if (cmd == GuiMenu::kCmdThemeFollowSystem) {
@@ -1704,7 +1713,6 @@ void MainWindow::ShowTrayMenu() {
 
     GuiMenu::State state;
     state.lang = lang_;
-    state.autostart = Autostart::IsEnabled();
     state.mountMode = ToMenuMountMode(mountMode_);
     state.capsuleStyle = ToMenuCapsuleStyle(capsuleStyle_);
     state.themeMode = ui_.themeMode;
@@ -1726,7 +1734,6 @@ void MainWindow::ShowTrayMenu() {
 void MainWindow::ShowTitleMenu() {
     GuiMenu::State state;
     state.lang = lang_;
-    state.autostart = Autostart::IsEnabled();
     state.mountMode = ToMenuMountMode(mountMode_);
     state.capsuleStyle = ToMenuCapsuleStyle(capsuleStyle_);
     state.themeMode = ui_.themeMode;
@@ -1749,7 +1756,6 @@ void MainWindow::ShowTitleMenu() {
 void MainWindow::ShowThemeMenu() {
     GuiMenu::State state;
     state.lang = lang_;
-    state.autostart = Autostart::IsEnabled();
     state.mountMode = ToMenuMountMode(mountMode_);
     state.capsuleStyle = ToMenuCapsuleStyle(capsuleStyle_);
     state.themeMode = ui_.themeMode;
@@ -1765,6 +1771,39 @@ void MainWindow::ShowThemeMenu() {
     menuOpen_ = false;
     HandleMenuCommand(cmd);
     if (cmd != GuiMenu::kCmdExit) MaybeCollapseCapsule();
+}
+
+void MainWindow::ShowSettings() {
+    Settings::Host host;
+    auto refresh = [&]() {
+        host.lang = lang_;
+        host.theme = theme_;
+        host.autostart = Autostart::IsEnabled();
+        host.backupDir = ui_.backupDir;
+        host.backupLastEpoch = ui_.backupLastEpoch;
+        host.backupStatus = BackupStatusText();
+    };
+    refresh();
+
+    host.setLanguage = [this, &refresh](Lang lang) {
+        SetLanguage(lang);
+        refresh();
+    };
+    host.setAutostart = [this, &refresh](bool enabled) {
+        SetAutostart(enabled);
+        refresh();
+    };
+    host.chooseBackupFolder = [this, &refresh](HWND owner) {
+        SetBackupDirectoryFromUser(owner);
+        refresh();
+    };
+    host.disableBackup = [this, &refresh]() {
+        DisableAutoBackup();
+        refresh();
+    };
+
+    Settings::ShowSettingsWindow(hwnd_, host);
+    MaybeCollapseCapsule();
 }
 
 void MainWindow::ShowListTabMenu(int index, float x, float y) {
@@ -2228,8 +2267,8 @@ void MainWindow::ToggleCompletedExpanded() {
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-void MainWindow::ToggleAutostart() {
-    Autostart::SetEnabled(!Autostart::IsEnabled());
+void MainWindow::SetAutostart(bool enabled) {
+    Autostart::SetEnabled(enabled);
 }
 
 void MainWindow::CreateEmptyActiveItem() {
@@ -2313,6 +2352,7 @@ void MainWindow::ExitApp() {
     if (editing()) CommitEdit(false); // 退出前把编辑中的文本落入 model，避免丢失
     if (calendarEditing()) EndCalendarEdit(true);
     SaveNow();
+    StopBackupTimer();
     RemoveTrayIcon();
     if (editFont_) { DeleteObject(editFont_); editFont_ = nullptr; }
     if (editBg_)   { DeleteObject(editBg_);   editBg_   = nullptr; }
@@ -2333,13 +2373,168 @@ void MainWindow::ScheduleSave() {
     SetTimer(hwnd_, kSaveTimerId, 800, nullptr); // 去抖：重复调用重置计时
 }
 
-void MainWindow::SaveNow() {
+bool MainWindow::SaveNow() {
     CaptureGeometry();
     if (!Store::Save(model_, calendar_, geom_, ui_)) {
         // 保存失败（磁盘满 / 占用 / 权限）：保留待存标记并延迟重试，不静默丢改动
         savePending_ = true;
         SetTimer(hwnd_, kSaveTimerId, 3000, nullptr);
+        return false;
     }
+    savePending_ = false;
+    return true;
+}
+
+bool MainWindow::ChooseBackupDirectory(HWND owner, std::wstring& out) {
+    out.clear();
+
+    HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    const bool needsUninit = SUCCEEDED(init);
+    if (FAILED(init) && init != RPC_E_CHANGED_MODE) return false;
+
+    IFileDialog* dialog = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                  IID_PPV_ARGS(&dialog));
+    if (FAILED(hr) || !dialog) {
+        if (needsUninit) CoUninitialize();
+        return false;
+    }
+
+    DWORD options = 0;
+    if (SUCCEEDED(dialog->GetOptions(&options))) {
+        dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+    }
+    dialog->SetTitle(T(Str::BackupFolder, lang_));
+
+    hr = dialog->Show(owner);
+    if (SUCCEEDED(hr)) {
+        IShellItem* item = nullptr;
+        hr = dialog->GetResult(&item);
+        if (SUCCEEDED(hr) && item) {
+            PWSTR path = nullptr;
+            hr = item->GetDisplayName(SIGDN_FILESYSPATH, &path);
+            if (SUCCEEDED(hr) && path) {
+                out = path;
+                CoTaskMemFree(path);
+            }
+            item->Release();
+        }
+    }
+
+    dialog->Release();
+    if (needsUninit) CoUninitialize();
+    return !out.empty();
+}
+
+void MainWindow::SetBackupDirectoryFromUser(HWND owner) {
+    std::wstring dir;
+    if (!ChooseBackupDirectory(owner ? owner : hwnd_, dir)) return;
+
+    std::wstring previousDir = ui_.backupDir;
+    long long previousEpoch = ui_.backupLastEpoch;
+
+    ui_.backupDir = dir;
+    ui_.backupLastEpoch = 0;
+    backupStatus_ = BackupStatus::None;
+    StartBackupTimer();
+    if (RunAutoBackupNow()) {
+        return;
+    }
+
+    if (backupStatus_ == BackupStatus::None)
+        backupStatus_ = BackupStatus::ChooseFailed;
+    ui_.backupDir = previousDir;
+    ui_.backupLastEpoch = previousEpoch;
+    StartBackupTimer();
+    ScheduleSave();
+}
+
+void MainWindow::DisableAutoBackup() {
+    ui_.backupDir.clear();
+    ui_.backupLastEpoch = 0;
+    backupStatus_ = BackupStatus::None;
+    StopBackupTimer();
+    ScheduleSave();
+}
+
+void MainWindow::StartBackupTimer() {
+    if (ui_.backupDir.empty()) {
+        StopBackupTimer();
+        return;
+    }
+    SetTimer(hwnd_, kBackupTimerId, kBackupCheckMs, nullptr);
+}
+
+void MainWindow::StopBackupTimer() {
+    if (hwnd_) KillTimer(hwnd_, kBackupTimerId);
+}
+
+void MainWindow::MaybeRunAutoBackup(bool force) {
+    if (ui_.backupDir.empty()) {
+        StopBackupTimer();
+        return;
+    }
+    const long long now = NowEpochSeconds();
+    const bool due = ui_.backupLastEpoch <= 0 ||
+                     now - ui_.backupLastEpoch >= kBackupIntervalSeconds;
+    if (!force && !due) return;
+    RunAutoBackupNow();
+}
+
+bool MainWindow::RunAutoBackupNow() {
+    if (ui_.backupDir.empty()) return false;
+
+    SyncActiveEditorsForSave();
+    const long long now = NowEpochSeconds();
+    const long long previousEpoch = ui_.backupLastEpoch;
+    ui_.backupLastEpoch = now;
+
+    if (savePending_) {
+        KillTimer(hwnd_, kSaveTimerId);
+    }
+    if (!SaveNow()) {
+        ui_.backupLastEpoch = previousEpoch;
+        backupStatus_ = BackupStatus::Failed;
+        return false;
+    }
+
+    Store::BackupResult result = Store::BackupDataFileTo(ui_.backupDir);
+    if (result == Store::BackupResult::Succeeded) {
+        backupStatus_ = BackupStatus::Ready;
+        SaveNow();
+        return true;
+    }
+
+    ui_.backupLastEpoch = previousEpoch;
+    switch (result) {
+        case Store::BackupResult::SameAsDataFile:
+            backupStatus_ = BackupStatus::SameFolder;
+            break;
+        case Store::BackupResult::InvalidDirectory:
+            backupStatus_ = BackupStatus::ChooseFailed;
+            break;
+        default:
+            backupStatus_ = BackupStatus::Failed;
+            break;
+    }
+    SaveNow();
+    return false;
+}
+
+std::wstring MainWindow::BackupStatusText() const {
+    switch (backupStatus_) {
+        case BackupStatus::Ready:
+            return T(Str::BackupReady, lang_);
+        case BackupStatus::Failed:
+            return T(Str::BackupFailed, lang_);
+        case BackupStatus::ChooseFailed:
+            return T(Str::BackupChooseFailed, lang_);
+        case BackupStatus::SameFolder:
+            return T(Str::BackupSameFolder, lang_);
+        case BackupStatus::None:
+            return L"";
+    }
+    return L"";
 }
 
 void MainWindow::CaptureGeometry() {

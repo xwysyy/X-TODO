@@ -198,6 +198,7 @@ private:
     void  ShowTrayMenu();
     void  ShowTitleMenu();                 // 标题栏菜单按钮弹出
     void  ShowThemeMenu();                 // 标题栏皮肤按钮弹出
+    void  ShowSettings();
     void  HandleMenuCommand(UINT cmd);
     void  SetLanguage(Lang lang);
     void  SwitchList(int index);
@@ -252,7 +253,7 @@ private:
     void ApplyTopmost();
     void TogglePin();
     void ToggleCompletedExpanded();
-    void ToggleAutostart();
+    void SetAutostart(bool enabled);
     void CreateEmptyActiveItem();
     void BeginNewTask(); // 新建一条待办并进入编辑（不受当前是否已有未完成项限制）
     void DeleteItem(int itemIndex);
@@ -262,8 +263,17 @@ private:
 
     // —— 保存 ——
     void ScheduleSave();
-    void SaveNow();
+    bool SaveNow();
     void CaptureGeometry();
+    void SyncActiveEditorsForSave();
+    bool ChooseBackupDirectory(HWND owner, std::wstring& out);
+    void SetBackupDirectoryFromUser(HWND owner);
+    void DisableAutoBackup();
+    void StartBackupTimer();
+    void StopBackupTimer();
+    void MaybeRunAutoBackup(bool force);
+    bool RunAutoBackupNow();
+    std::wstring BackupStatusText() const;
 
     // —— DPI ——
     float dpiScale() const { return dpi_ / 96.0f; }
@@ -362,8 +372,13 @@ private:
 
     static constexpr UINT_PTR kSaveTimerId = 1;
     static constexpr UINT_PTR kCollapseTimerId = 4;     // 展开胶囊：鼠标离开后的折叠宽限定时器
+    static constexpr UINT_PTR kBackupTimerId = 5;       // 自动备份到用户指定目录
     static constexpr UINT      kCollapseDelayMs = 500;  // 折叠宽限毫秒：移回即取消，避免太敏感
+    static constexpr UINT      kBackupCheckMs = 60 * 1000;
+    static constexpr long long kBackupIntervalSeconds = 60 * 60;
+    enum class BackupStatus { None, Ready, Failed, ChooseFailed, SameFolder };
     bool savePending_ = false;
+    BackupStatus backupStatus_ = BackupStatus::None;
 
     HFONT  editFont_ = nullptr; // 行内编辑框字体
     HBRUSH editBg_   = nullptr; // 行内编辑框背景刷（贴合纸张色）

@@ -10,8 +10,14 @@ enum class Str {
     ModeCapsule,  // 侧边胶囊
     StyleSlim,    // 胶囊样式：细边
     StyleDot,     // 胶囊样式：圆点
+    Settings,     // 设置入口 / 窗口标题
+    SettingsGeneral, // 设置分组：通用
+    SettingsDataBackup, // 设置分组：数据备份
+    SettingsClose, // 设置窗口关闭按钮
+    SettingOn,    // 设置开关：开
+    SettingOff,   // 设置开关：关
+    Language,     // 设置项：语言
     Autostart,    // 开机自启
-    ToggleLang,   // 语言切换项（显示目标语言名）
     Exit,         // 退出
     Calendar,     // 日历标签
     CalendarToday,// 日历回到今天按钮
@@ -35,6 +41,16 @@ enum class Str {
     ConfirmOk,    // 确认按钮
     ConfirmCancel,// 取消按钮
     LoadFailedMsg,// 数据读取失败提示
+    AutoBackup,   // 自动备份设置
+    BackupFolder, // 备份目录
+    BackupChangeFolder, // 更改备份目录
+    BackupLast,   // 上次备份
+    BackupNever,  // 从未备份
+    BackupDisabled, // 自动备份关闭
+    BackupReady,  // 备份成功
+    BackupFailed, // 备份失败
+    BackupChooseFailed, // 备份目录选择失败
+    BackupSameFolder, // 备份目录等于数据目录
 
     // —— 主题 ——
     ThemeHeader,             // 菜单"皮肤"分组标题

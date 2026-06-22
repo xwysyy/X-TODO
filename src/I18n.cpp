@@ -12,8 +12,14 @@ const wchar_t* T(Str key, Lang lang) {
         case Str::ModeCapsule:   return zh ? L"侧边胶囊"        : L"Side capsule";
         case Str::StyleSlim:     return zh ? L"细边"            : L"Slim bar";
         case Str::StyleDot:      return zh ? L"圆点"            : L"Dot";
+        case Str::Settings:      return zh ? L"设置"            : L"Settings";
+        case Str::SettingsGeneral:return zh ? L"通用"           : L"General";
+        case Str::SettingsDataBackup:return zh ? L"数据备份"    : L"Data backup";
+        case Str::SettingsClose: return zh ? L"关闭"            : L"Close";
+        case Str::SettingOn:     return zh ? L"开"              : L"On";
+        case Str::SettingOff:    return zh ? L"关"              : L"Off";
+        case Str::Language:      return zh ? L"语言"            : L"Language";
         case Str::Autostart:     return zh ? L"开机自启"        : L"Start with Windows";
-        case Str::ToggleLang:    return zh ? L"English"         : L"中文"; // 显示可切换到的目标语言
         case Str::Exit:          return zh ? L"退出"            : L"Exit";
         case Str::Calendar:      return zh ? L"日历"            : L"Calendar";
         case Str::CalendarToday: return zh ? L"今天"            : L"Today";
@@ -41,6 +47,16 @@ const wchar_t* T(Str key, Lang lang) {
         case Str::ConfirmCancel: return zh ? L"取消"            : L"Cancel";
         case Str::LoadFailedMsg: return zh ? L"读取待办数据失败，原文件已备份为 data.json.corrupt.bak，本次以空白开始。"
                                            : L"Could not read your data. The original was backed up as data.json.corrupt.bak; starting empty.";
+        case Str::AutoBackup:    return zh ? L"自动备份"        : L"Auto backup";
+        case Str::BackupFolder:  return zh ? L"备份目录"        : L"Backup folder";
+        case Str::BackupChangeFolder:return zh ? L"更改..."     : L"Change...";
+        case Str::BackupLast:    return zh ? L"上次备份"        : L"Last backup";
+        case Str::BackupNever:   return zh ? L"尚未备份"        : L"Not backed up yet";
+        case Str::BackupDisabled:return zh ? L"未开启"          : L"Off";
+        case Str::BackupReady:   return zh ? L"备份完成"        : L"Backup complete";
+        case Str::BackupFailed:  return zh ? L"备份失败"        : L"Backup failed";
+        case Str::BackupChooseFailed:return zh ? L"无法使用这个备份目录" : L"Could not use this backup folder";
+        case Str::BackupSameFolder:return zh ? L"备份目录不能是当前数据目录" : L"Backup folder cannot be the current data folder";
 
         case Str::ThemeHeader:        return zh ? L"皮肤"           : L"Theme";
         case Str::ThemeFollowSystem:  return zh ? L"跟随系统"       : L"Follow system";

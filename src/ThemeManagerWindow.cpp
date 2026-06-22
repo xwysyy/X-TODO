@@ -1,4 +1,5 @@
 #include "ThemeManagerWindow.h"
+#include "ThemedWindowControls.h"
 
 #include <windowsx.h>
 #include <cwchar>
@@ -9,45 +10,7 @@ namespace Theme {
 namespace {
 
 constexpr wchar_t kManagerClass[] = L"XTodoThemeManagerWindow";
-
-int Px(HWND h, float v) { UINT d = h ? GetDpiForWindow(h) : 96; return (int)(v * d / 96.0f + 0.5f); }
-
-HFONT MkFont(HWND h, float size, bool bold = false) {
-    LOGFONTW lf{};
-    lf.lfHeight  = -Px(h, size);
-    lf.lfWeight  = bold ? FW_SEMIBOLD : FW_NORMAL;
-    lf.lfQuality = CLEARTYPE_QUALITY;
-    wcscpy_s(lf.lfFaceName, kFontFamily);
-    return CreateFontIndirectW(&lf);
-}
-
-void FillC(HDC dc, RECT r, uint32_t c) { HBRUSH b = CreateSolidBrush(GdiColor(c)); ::FillRect(dc, &r, b); DeleteObject(b); }
-
-void FillRoundC(HDC dc, RECT r, int radius, uint32_t c) {
-    HBRUSH br = CreateSolidBrush(GdiColor(c));
-    HGDIOBJ ob = SelectObject(dc, br);
-    HGDIOBJ op = SelectObject(dc, GetStockObject(NULL_PEN));
-    RoundRect(dc, r.left, r.top, r.right, r.bottom, radius, radius);
-    SelectObject(dc, op); SelectObject(dc, ob);
-    DeleteObject(br);
-}
-
-void StrokeRoundC(HDC dc, RECT r, int radius, uint32_t c) {
-    HPEN pen = CreatePen(PS_SOLID, 1, GdiColor(c));
-    HGDIOBJ op = SelectObject(dc, pen);
-    HGDIOBJ ob = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    RoundRect(dc, r.left, r.top, r.right, r.bottom, radius, radius);
-    SelectObject(dc, ob); SelectObject(dc, op);
-    DeleteObject(pen);
-}
-
-void DrawTxt(HDC dc, const std::wstring& s, RECT r, HFONT f, uint32_t c, UINT fl) {
-    HGDIOBJ o = SelectObject(dc, f);
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, GdiColor(c));
-    DrawTextW(dc, s.c_str(), (int)s.size(), &r, fl);
-    SelectObject(dc, o);
-}
+namespace Ui = ThemedWindow;
 
 enum class RowKind { Header, ThemeItem, Text, Button };
 enum class BtnAction { None, Reload, OpenFolder, Export, SetLight, SetDark, Close };
@@ -138,11 +101,11 @@ void BuildRows(ManagerState& s) {
 }
 
 void LayoutRows(ManagerState& s) {
-    int pad   = Px(s.hwnd, 8);
-    int itemH = Px(s.hwnd, 24);
-    int headH = Px(s.hwnd, 22);
-    int txtH  = Px(s.hwnd, 18);
-    int btnH  = Px(s.hwnd, 26);
+    int pad   = Ui::Px(s.hwnd, 8);
+    int itemH = Ui::Px(s.hwnd, 24);
+    int headH = Ui::Px(s.hwnd, 22);
+    int txtH  = Ui::Px(s.hwnd, 18);
+    int btnH  = Ui::Px(s.hwnd, 26);
     int y = pad;
     for (auto& r : s.rows) {
         r.top = y;
@@ -184,12 +147,12 @@ void Paint(ManagerState& s) {
     HGDIOBJ oldBmp = SelectObject(mem, bmp);
 
     const ColorSet& c = s.host->current.colors;
-    FillC(mem, rc, c.paperElevated);
+    Ui::FillColor(mem, rc, c.paperElevated);
 
-    HFONT headFont = MkFont(s.hwnd, 11.0f, true);
-    HFONT itemFont = MkFont(s.hwnd, 10.5f, false);
-    HFONT txtFont  = MkFont(s.hwnd, 9.5f, false);
-    int padX = Px(s.hwnd, 12);
+    HFONT headFont = Ui::CreateTextFont(s.hwnd, 11.0f, true);
+    HFONT itemFont = Ui::CreateTextFont(s.hwnd, 10.5f, false);
+    HFONT txtFont  = Ui::CreateTextFont(s.hwnd, 9.5f, false);
+    int padX = Ui::Px(s.hwnd, 12);
 
     for (size_t i = 0; i < s.rows.size(); ++i) {
         const Row& r = s.rows[i];
@@ -199,14 +162,14 @@ void Paint(ManagerState& s) {
 
         if (r.kind == RowKind::Header) {
             if (!r.text.empty())
-                DrawTxt(mem, r.text, rr, headFont, c.text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                Ui::DrawTextInRect(mem, r.text, rr, headFont, c.text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         } else if (r.kind == RowKind::Text) {
-            DrawTxt(mem, r.text, rr, txtFont, c.textWeak, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            Ui::DrawTextInRect(mem, r.text, rr, txtFont, c.textWeak, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         } else if (r.kind == RowKind::ThemeItem) {
-            RECT row{ Px(s.hwnd, 8), top + 1, rc.right - Px(s.hwnd, 8), top + r.height - 1 };
-            if ((int)i == s.hover) FillRoundC(mem, row, Px(s.hwnd, 6), c.menuHover);
+            RECT row{ Ui::Px(s.hwnd, 8), top + 1, rc.right - Ui::Px(s.hwnd, 8), top + r.height - 1 };
+            if ((int)i == s.hover) Ui::FillRoundColor(mem, row, Ui::Px(s.hwnd, 6), c.menuHover);
             // radio：当前主题打勾点
-            int dotR = Px(s.hwnd, 4);
+            int dotR = Ui::Px(s.hwnd, 4);
             int cx = padX + dotR, cy = top + r.height / 2;
             HBRUSH dotBr = CreateSolidBrush(GdiColor(r.current ? c.checkFill : c.paperElevated));
             HPEN dotPen = CreatePen(PS_SOLID, 1, GdiColor(r.current ? c.checkFill : c.checkBorder));
@@ -214,19 +177,19 @@ void Paint(ManagerState& s) {
             Ellipse(mem, cx - dotR, cy - dotR, cx + dotR, cy + dotR);
             SelectObject(mem, op); SelectObject(mem, ob);
             DeleteObject(dotBr); DeleteObject(dotPen);
-            RECT tr{ padX + dotR * 2 + Px(s.hwnd, 8), top, rc.right - padX, top + r.height };
-            DrawTxt(mem, r.text, tr, itemFont, c.text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            RECT tr{ padX + dotR * 2 + Ui::Px(s.hwnd, 8), top, rc.right - padX, top + r.height };
+            Ui::DrawTextInRect(mem, r.text, tr, itemFont, c.text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         } else if (r.kind == RowKind::Button) {
             RECT btn{ padX, top + 2, rc.right - padX, top + r.height - 2 };
             uint32_t fill = ((int)i == s.hover) ? c.buttonHover : c.paperElevated;
-            FillRoundC(mem, btn, Px(s.hwnd, 7), fill);
-            StrokeRoundC(mem, btn, Px(s.hwnd, 7), c.paperEdge);
-            DrawTxt(mem, r.text, btn, itemFont, c.text, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            Ui::FillRoundColor(mem, btn, Ui::Px(s.hwnd, 7), fill);
+            Ui::StrokeRoundColor(mem, btn, Ui::Px(s.hwnd, 7), c.paperEdge);
+            Ui::DrawTextInRect(mem, r.text, btn, itemFont, c.text, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
     }
 
     // 外边框
-    StrokeRoundC(mem, RECT{ 0, 0, rc.right, rc.bottom }, Px(s.hwnd, 10), c.paperEdge);
+    Ui::StrokeRoundColor(mem, RECT{ 0, 0, rc.right, rc.bottom }, Ui::Px(s.hwnd, 10), c.paperEdge);
 
     BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
     DeleteObject(headFont); DeleteObject(itemFont); DeleteObject(txtFont);
@@ -287,7 +250,7 @@ LRESULT CALLBACK ManagerProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_MOUSEWHEEL: {
         int delta = GET_WHEEL_DELTA_WPARAM(wp);
-        s->scroll -= (delta / 120) * Px(hwnd, 36);
+        s->scroll -= (delta / 120) * Ui::Px(hwnd, 36);
         ClampScroll(*s);
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;

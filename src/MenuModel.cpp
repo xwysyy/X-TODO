@@ -27,8 +27,7 @@ void AppendModeAndAppItems(std::vector<Item>& items, const State& state, bool in
     items.push_back(Item{ kCmdStyleDot, T(Str::StyleDot, state.lang), false,
                           inCapsule && state.capsuleStyle == CapsuleStyle::Dot, false, true, 1 });
     items.push_back(Separator());
-    items.push_back(Item{ kCmdToggleLang, T(Str::ToggleLang, state.lang) });
-    items.push_back(Item{ kCmdAutostart, T(Str::Autostart, state.lang), false, state.autostart });
+    items.push_back(Item{ kCmdSettings, T(Str::Settings, state.lang) });
     items.push_back(Separator());
     items.push_back(Item{ kCmdExit, T(Str::Exit, state.lang), false, false, true });
 }

@@ -11,11 +11,10 @@ namespace GuiMenu {
 using Command = unsigned int;
 
 inline constexpr Command kCmdShow = 1;
-inline constexpr Command kCmdAutostart = 2;
 inline constexpr Command kCmdExit = 3;
+inline constexpr Command kCmdSettings = 4;
 inline constexpr Command kCmdModeNormal = 10;
 inline constexpr Command kCmdModeDesktop = 11;
-inline constexpr Command kCmdToggleLang = 20;
 inline constexpr Command kCmdStyleSlim = 30;
 inline constexpr Command kCmdStyleDot = 31;
 
@@ -51,7 +50,6 @@ struct Item {
 
 struct State {
     Lang lang = Lang::Zh;
-    bool autostart = false;
     MountMode mountMode = MountMode::Normal;
     CapsuleStyle capsuleStyle = CapsuleStyle::Slim;
     std::string themeMode = "builtin";

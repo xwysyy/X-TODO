@@ -47,6 +47,7 @@ ctest --test-dir build-tests --output-on-failure -C Release
 - Hit-testing and geometry: `docs/conventions/window-hittest-and-geometry.md`
 - Multilevel list storage and behavior: `docs/conventions/multilevel-lists.md`
 - Calendar system: `docs/conventions/calendar.md`
+- Settings and automatic backup: `docs/conventions/settings-and-backup.md`
 - Testing layout and regression policy: `docs/testing.md`
 
 ## Commit And Push

@@ -25,6 +25,13 @@ bool HasCommand(const std::vector<GuiMenu::Item>& items, GuiMenu::Command comman
     return false;
 }
 
+bool HasText(const std::vector<GuiMenu::Item>& items, const std::wstring& text) {
+    for (const GuiMenu::Item& item : items) {
+        if (!item.separator && item.text == text) return true;
+    }
+    return false;
+}
+
 const GuiMenu::Item* FindCommand(const std::vector<GuiMenu::Item>& items, GuiMenu::Command command) {
     for (const GuiMenu::Item& item : items) {
         if (!item.separator && item.cmd == command) return &item;
@@ -301,7 +308,6 @@ void EditIntentMapsKeyboardWithoutLeakingControlCharacters() {
 void TitleAndTrayMenusDoNotExposeListManagementCommands() {
     GuiMenu::State state;
     state.lang = Lang::En;
-    state.autostart = true;
     state.mountMode = GuiMenu::MountMode::Capsule;
     state.capsuleStyle = GuiMenu::CapsuleStyle::Dot;
     state.listCount = 3;
@@ -313,6 +319,10 @@ void TitleAndTrayMenusDoNotExposeListManagementCommands() {
     EXPECT_FALSE(HasCommand(title, GuiMenu::kCmdShow));
     EXPECT_TRUE(HasCommand(tray, GuiMenu::kCmdExit));
     EXPECT_TRUE(HasCommand(title, GuiMenu::kCmdExit));
+    EXPECT_TRUE(HasCommand(tray, GuiMenu::kCmdSettings));
+    EXPECT_TRUE(HasCommand(title, GuiMenu::kCmdSettings));
+    EXPECT_FALSE(HasText(tray, T(Str::Autostart, state.lang)));
+    EXPECT_FALSE(HasText(title, T(Str::Autostart, state.lang)));
 
     EXPECT_FALSE(HasCommand(tray, GuiMenu::kCmdListRename));
     EXPECT_FALSE(HasCommand(tray, GuiMenu::kCmdListDelete));

@@ -9,9 +9,11 @@ using namespace xtodo_test;
 
 namespace {
 
-    const Str kAllStrings[] = {
-        Str::Show, Str::ModeNormal, Str::ModeDesktop, Str::ModeCapsule,
-        Str::StyleSlim, Str::StyleDot, Str::Autostart, Str::ToggleLang,
+const Str kAllStrings[] = {
+    Str::Show, Str::ModeNormal, Str::ModeDesktop, Str::ModeCapsule,
+    Str::StyleSlim, Str::StyleDot, Str::Settings, Str::SettingsGeneral,
+    Str::SettingsDataBackup, Str::SettingsClose, Str::SettingOn, Str::SettingOff,
+    Str::Language, Str::Autostart,
     Str::Exit, Str::Calendar, Str::CalendarToday,
     Str::CalendarModeDay, Str::CalendarModeWeek, Str::CalendarModeMonth,
     Str::CalendarBlockDelete, Str::CalendarBlockDeleteMsg,
@@ -19,6 +21,9 @@ namespace {
     Str::ListDefault, Str::ListRename, Str::ListDelete,
     Str::ListDeleteMsg, Str::Completed, Str::Clear, Str::DeleteItemMsg,
     Str::ClearAllMsg, Str::ConfirmOk, Str::ConfirmCancel, Str::LoadFailedMsg,
+    Str::AutoBackup, Str::BackupFolder, Str::BackupChangeFolder,
+    Str::BackupLast, Str::BackupNever, Str::BackupDisabled, Str::BackupReady,
+    Str::BackupFailed, Str::BackupChooseFailed, Str::BackupSameFolder,
     Str::ThemeHeader,
     Str::ThemeFollowSystem, Str::ThemePaper, Str::ThemeMint, Str::ThemeSky,
     Str::ThemeRose, Str::ThemeSand, Str::ThemeCustom, Str::ThemeManager,
@@ -47,8 +52,6 @@ void EveryDeclaredStringHasChineseAndEnglishText() {
 }
 
 void KeyTranslationsMatchBehavioralExpectations() {
-    EXPECT_EQ(std::wstring(T(Str::ToggleLang, Lang::Zh)), std::wstring(L"English"));
-    EXPECT_EQ(std::wstring(T(Str::ToggleLang, Lang::En)), std::wstring(L"中文"));
     EXPECT_EQ(std::wstring(T(Str::ListDefault, Lang::Zh)), std::wstring(L"默认"));
     EXPECT_EQ(std::wstring(T(Str::ListDefault, Lang::En)), std::wstring(L"Inbox"));
     EXPECT_TRUE(std::wstring(T(Str::LoadFailedMsg, Lang::En)).find(L"corrupt.bak") != std::wstring::npos);

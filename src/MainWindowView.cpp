@@ -2335,6 +2335,18 @@ void MainWindow::CancelEdit() {
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+void MainWindow::SyncActiveEditorsForSave() {
+    if (editing() && edit_ && editIndex_ >= 0 && editIndex_ < model_.Count() &&
+        !model_.Items()[editIndex_].done) {
+        model_.SetText(editIndex_, NormalizeTodoText(ReadWindowText(edit_)));
+    }
+    if (calendarEditing()) {
+        if (calendarTitleEdit_)
+            calendar_.SetBlockTitle(calendarEditId_, ReadWindowText(calendarTitleEdit_));
+        CommitCalendarTimeEdits(false);
+    }
+}
+
 void MainWindow::MaybeCollapseCapsule() {
     if (mountMode_ != MountMode::Capsule || !capsuleExpanded_ || animActive_ ||
         editing() || calendarEditing()) return;

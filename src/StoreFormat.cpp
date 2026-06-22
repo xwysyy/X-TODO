@@ -86,6 +86,11 @@ int GetInt(const json& o, const char* key, int def) {
     return (it != o.end() && it->is_number_integer()) ? it->get<int>() : def;
 }
 
+long long GetLongLong(const json& o, const char* key, long long def) {
+    auto it = o.find(key);
+    return (it != o.end() && it->is_number_integer()) ? it->get<long long>() : def;
+}
+
 std::string GetUtf8(const json& o, const char* key) {
     auto it = o.find(key);
     return (it != o.end() && it->is_string()) ? it->get<std::string>() : std::string();
@@ -175,6 +180,11 @@ bool Parse(const std::string& utf8, TodoModel& model, CalendarModel& calendar,
             else if (v == "week") ui.calendarView = CalendarViewMode::Week;
             else if (v == "month") ui.calendarView = CalendarViewMode::Month;
         }
+        ui.backupDir = GetWide(u, "backupDir");
+        {
+            long long ts = GetLongLong(u, "backupLastEpoch", 0);
+            ui.backupLastEpoch = ts > 0 ? ts : 0;
+        }
         selectedListId = GetUtf8(u, "currentList");
     }
 
@@ -255,6 +265,8 @@ std::string Serialize(const TodoModel& model, const CalendarModel& calendar,
     u["calendarView"] = (ui.calendarView == CalendarViewMode::Week)    ? "week"
                         : (ui.calendarView == CalendarViewMode::Month) ? "month"
                                                                        : "day";
+    if (!ui.backupDir.empty()) u["backupDir"] = WideToUtf8(ui.backupDir);
+    if (ui.backupLastEpoch > 0) u["backupLastEpoch"] = ui.backupLastEpoch;
     u["currentList"] = model.CurrentList().id;
     root["ui"] = std::move(u);
 

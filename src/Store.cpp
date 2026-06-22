@@ -3,7 +3,9 @@
 
 #include <windows.h>
 #include <shlobj.h>
+#include <cwctype>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -46,15 +48,63 @@ bool WriteAllBytesAtomic(const std::wstring& path, const std::string& bytes) {
     return true;
 }
 
+std::wstring TrimTrailingSlash(std::wstring path) {
+    while (path.size() > 3 && (path.back() == L'\\' || path.back() == L'/')) {
+        path.pop_back();
+    }
+    return path;
+}
+
+std::wstring FullPath(std::wstring path) {
+    if (path.empty()) return path;
+    DWORD len = GetFullPathNameW(path.c_str(), 0, nullptr, nullptr);
+    if (len == 0) return TrimTrailingSlash(std::move(path));
+    std::wstring out(len + 1, L'\0');
+    DWORD got = GetFullPathNameW(path.c_str(), len + 1, out.data(), nullptr);
+    if (got == 0 || got > len) return TrimTrailingSlash(std::move(path));
+    out.resize(got);
+    return TrimTrailingSlash(std::move(out));
+}
+
+std::wstring LowerPath(std::wstring path) {
+    for (wchar_t& ch : path)
+        ch = static_cast<wchar_t>(towlower(ch));
+    return path;
+}
+
+bool SamePathText(const std::wstring& a, const std::wstring& b) {
+    return LowerPath(FullPath(a)) == LowerPath(FullPath(b));
+}
+
+bool DirectoryUsable(const std::wstring& dir) {
+    if (dir.empty()) return false;
+    DWORD attrs = GetFileAttributesW(dir.c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES &&
+           (attrs & FILE_ATTRIBUTE_DIRECTORY);
+}
+
 } // namespace
 
-std::wstring Store::DataFilePath() {
+std::wstring Store::DataDirectoryPath() {
     wchar_t appdata[MAX_PATH];
     if (FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata)))
         return L"";
     std::wstring dir = std::wstring(appdata) + L"\\x-todo";
     CreateDirectoryW(dir.c_str(), nullptr); // 已存在返回失败但无碍
+    return dir;
+}
+
+std::wstring Store::DataFilePath() {
+    std::wstring dir = DataDirectoryPath();
+    if (dir.empty()) return L"";
     return dir + L"\\data.json";
+}
+
+std::wstring Store::BackupTargetPath(const std::wstring& backupDir) {
+    if (backupDir.empty()) return L"";
+    std::wstring dir = backupDir;
+    if (dir.back() != L'\\' && dir.back() != L'/') dir += L"\\";
+    return dir + L"data.json";
 }
 
 LoadResult Store::Load(TodoModel& model, CalendarModel& calendar, WindowGeometry& geom, UiState& ui) {
@@ -84,4 +134,20 @@ bool Store::Save(const TodoModel& model, const CalendarModel& calendar,
     std::wstring path = DataFilePath();
     if (path.empty()) return false;
     return WriteAllBytesAtomic(path, StoreFormat::Serialize(model, calendar, geom, ui));
+}
+
+Store::BackupResult Store::BackupDataFileTo(const std::wstring& backupDir) {
+    if (!DirectoryUsable(backupDir)) return Store::BackupResult::InvalidDirectory;
+
+    std::wstring source = DataFilePath();
+    if (source.empty()) return Store::BackupResult::ReadFailed;
+
+    std::wstring target = BackupTargetPath(backupDir);
+    if (target.empty()) return Store::BackupResult::InvalidDirectory;
+    if (SamePathText(source, target)) return Store::BackupResult::SameAsDataFile;
+
+    std::string bytes;
+    if (!ReadAllBytes(source, bytes)) return Store::BackupResult::ReadFailed;
+    if (!WriteAllBytesAtomic(target, bytes)) return Store::BackupResult::WriteFailed;
+    return Store::BackupResult::Succeeded;
 }

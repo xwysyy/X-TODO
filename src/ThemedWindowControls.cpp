@@ -1,0 +1,100 @@
+#include "ThemedWindowControls.h"
+
+#include <cwchar>
+#include <utility>
+
+namespace ThemedWindow {
+
+int Px(HWND hwnd, float value) {
+    UINT dpi = hwnd ? GetDpiForWindow(hwnd) : 96;
+    return static_cast<int>(value * dpi / 96.0f + 0.5f);
+}
+
+HFONT CreateTextFont(HWND hwnd, float size, bool bold) {
+    LOGFONTW lf{};
+    lf.lfHeight  = -Px(hwnd, size);
+    lf.lfWeight  = bold ? FW_SEMIBOLD : FW_NORMAL;
+    lf.lfQuality = CLEARTYPE_QUALITY;
+    wcscpy_s(lf.lfFaceName, Theme::kFontFamily);
+    return CreateFontIndirectW(&lf);
+}
+
+void FillColor(HDC dc, RECT rect, uint32_t color) {
+    HBRUSH brush = CreateSolidBrush(Theme::GdiColor(color));
+    ::FillRect(dc, &rect, brush);
+    DeleteObject(brush);
+}
+
+void FillRoundColor(HDC dc, RECT rect, int radius, uint32_t color) {
+    HBRUSH brush = CreateSolidBrush(Theme::GdiColor(color));
+    HGDIOBJ oldBrush = SelectObject(dc, brush);
+    HGDIOBJ oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
+    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+    SelectObject(dc, oldPen);
+    SelectObject(dc, oldBrush);
+    DeleteObject(brush);
+}
+
+void StrokeRoundColor(HDC dc, RECT rect, int radius, uint32_t color) {
+    HPEN pen = CreatePen(PS_SOLID, 1, Theme::GdiColor(color));
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(pen);
+}
+
+void DrawTextInRect(HDC dc, const std::wstring& text, RECT rect, HFONT font,
+                    uint32_t color, UINT flags) {
+    HGDIOBJ oldFont = SelectObject(dc, font);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, Theme::GdiColor(color));
+    DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &rect, flags);
+    SelectObject(dc, oldFont);
+}
+
+std::wstring ElideMiddle(HDC dc, HFONT font, const std::wstring& text, int maxWidth) {
+    if (text.empty() || maxWidth <= 0) return text;
+
+    HGDIOBJ oldFont = SelectObject(dc, font);
+    auto fits = [&](const std::wstring& s) {
+        SIZE size{};
+        GetTextExtentPoint32W(dc, s.c_str(), static_cast<int>(s.size()), &size);
+        return size.cx <= maxWidth;
+    };
+
+    if (fits(text)) {
+        SelectObject(dc, oldFont);
+        return text;
+    }
+
+    const std::wstring marker = L"...";
+    if (!fits(marker)) {
+        SelectObject(dc, oldFont);
+        return marker;
+    }
+
+    size_t left = 0;
+    size_t right = 0;
+    std::wstring best = marker;
+    while (left + right < text.size()) {
+        const bool takeLeft = left <= right;
+        if (takeLeft) ++left;
+        else ++right;
+
+        std::wstring candidate = text.substr(0, left) + marker +
+                                 text.substr(text.size() - right);
+        if (!fits(candidate)) {
+            if (takeLeft) --left;
+            else --right;
+            break;
+        }
+        best = std::move(candidate);
+    }
+
+    SelectObject(dc, oldFont);
+    return best;
+}
+
+} // namespace ThemedWindow

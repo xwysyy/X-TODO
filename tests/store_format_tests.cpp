@@ -22,6 +22,8 @@ void ExpectDefaultUi(const UiState& ui) {
     EXPECT_EQ(ui.activeView, std::string("list"));
     EXPECT_EQ(ui.calendarDay, std::string(""));
     EXPECT_TRUE(ui.calendarView == CalendarViewMode::Day);
+    EXPECT_TRUE(ui.backupDir.empty());
+    EXPECT_EQ(ui.backupLastEpoch, 0);
 }
 
 void SerializeRoundTripPreservesMultiListModelUiAndGeometry() {
@@ -59,6 +61,8 @@ void SerializeRoundTripPreservesMultiListModelUiAndGeometry() {
     ui.activeView = "calendar";
     ui.calendarDay = "2026-06-22";
     ui.calendarView = CalendarViewMode::Week;
+    ui.backupDir = L"C:\\Backups\\X-TODO 数据";
+    ui.backupLastEpoch = 1782180000;
 
     const int blockA = calendar.AddBlock("2026-06-22", 9 * 60 + 7, 10 * 60 + 3, L"Plan\tA");
     const int blockB = calendar.AddBlock("2026-06-23", 18 * 60, 19 * 60 + 30, L"Tomorrow\\B");
@@ -70,6 +74,8 @@ void SerializeRoundTripPreservesMultiListModelUiAndGeometry() {
     EXPECT_TRUE(text.find("\"activeView\": \"calendar\"") != std::string::npos);
     EXPECT_TRUE(text.find("\"calendarDay\": \"2026-06-22\"") != std::string::npos);
     EXPECT_TRUE(text.find("\"calendarView\": \"week\"") != std::string::npos);
+    EXPECT_TRUE(text.find("\"backupLastEpoch\": 1782180000") != std::string::npos);
+    EXPECT_TRUE(text.find("X-TODO 数据") != std::string::npos);
 
     TodoModel loaded;
     CalendarModel loadedCalendar;
@@ -97,6 +103,8 @@ void SerializeRoundTripPreservesMultiListModelUiAndGeometry() {
     EXPECT_EQ(loadedUi.activeView, std::string("calendar"));
     EXPECT_EQ(loadedUi.calendarDay, std::string("2026-06-22"));
     EXPECT_TRUE(loadedUi.calendarView == CalendarViewMode::Week);
+    EXPECT_EQ(loadedUi.backupDir, std::wstring(L"C:\\Backups\\X-TODO 数据"));
+    EXPECT_EQ(loadedUi.backupLastEpoch, 1782180000);
 
     EXPECT_EQ(loaded.ListCount(), 2);
     EXPECT_EQ(loaded.CurrentListIndex(), 1);
@@ -158,7 +166,9 @@ void UiParsingValidatesEnumsAndClampsRanges() {
         "capsuleDockT": 2.5,
         "activeView": "popup",
         "calendarDay": "bad",
-        "calendarView": "bogus"
+        "calendarView": "bogus",
+        "backupDir": "D:\\Backup",
+        "backupLastEpoch": -7
       },
       "lists": [ { "id": "inbox", "title": "Inbox", "items": [] } ]
     })";
@@ -180,6 +190,8 @@ void UiParsingValidatesEnumsAndClampsRanges() {
     EXPECT_EQ(ui.activeView, std::string("list"));    // popup 非法 → 默认
     EXPECT_EQ(ui.calendarDay, std::string(""));       // bad 非法 → 默认
     EXPECT_TRUE(ui.calendarView == CalendarViewMode::Day); // bogus → day
+    EXPECT_EQ(ui.backupDir, std::wstring(L"D:\\Backup"));
+    EXPECT_EQ(ui.backupLastEpoch, 0);                 // 负数时间戳 → 默认
     AssertInvariants(model);
 }
 
@@ -284,7 +296,8 @@ void MalformedFieldsFallBackToDefaultsWithoutThrowing() {
     // 类型全错但 JSON 合法：解析须成功并逐字段回退默认，不抛异常。
     const std::string text = R"({
       "window": { "x": "nope", "y": null, "w": 100, "h": 200 },
-      "ui": { "alwaysOnTop": "yes", "capsuleDockT": "half", "currentList": 5 },
+      "ui": { "alwaysOnTop": "yes", "capsuleDockT": "half", "currentList": 5,
+              "backupDir": 17, "backupLastEpoch": "soon" },
       "calendar": "not an array",
       "lists": [
         { "id": "inbox", "title": 123, "items": [
@@ -308,6 +321,8 @@ void MalformedFieldsFallBackToDefaultsWithoutThrowing() {
     EXPECT_EQ(geom.h, 200);
     EXPECT_TRUE(ui.alwaysOnTop);                 // "yes" 非 bool → 默认
     EXPECT_NEAR(ui.capsuleDockT, 0.5, 0.000001); // "half" 非数 → 默认
+    EXPECT_TRUE(ui.backupDir.empty());            // backupDir 非字符串 → 默认
+    EXPECT_EQ(ui.backupLastEpoch, 0);             // backupLastEpoch 非整数 → 默认
     EXPECT_EQ(model.ListCount(), 1);
     EXPECT_EQ(model.CurrentList().title, std::wstring(L"默认")); // title 非字符串 → 空 → 默认标题
     ExpectTexts(model, {L"ok"});                  // 字符串项保留，非对象项跳过

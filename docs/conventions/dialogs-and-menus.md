@@ -96,8 +96,10 @@ Per-menu differences (alignment, item list) belong in `ShowTitleMenu` /
 
 The title-bar menu and tray menu do not carry list or tab management.
 Switching lists and creating a list belong to the main window's tab strip;
-the menu surfaces are for window mode, capsule style, language, autostart,
-theme, and exit commands only.
+the menu surfaces are for immediate window mode, capsule style, settings,
+theme, and exit commands only. Long-lived settings such as language,
+autostart, and automatic backup belong in the settings window, not as direct
+menu rows.
 
 List-tab management stays on the tab strip itself. Double-clicking a list tab
 renames it; right-clicking a list tab opens that tab's context menu for rename

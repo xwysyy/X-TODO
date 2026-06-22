@@ -38,6 +38,7 @@ add_xtodo_test(xtodo_store_format_tests
     ../src/CalendarModel.cpp
     ../src/TodoModel.cpp
 )
+target_include_directories(xtodo_store_format_tests PRIVATE ../third_party)
 
 add_xtodo_test(xtodo_theme_tests
     theme_tests.cpp

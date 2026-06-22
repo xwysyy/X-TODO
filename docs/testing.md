@@ -12,7 +12,7 @@ Win32 dependencies so they run in CI on both Linux and Windows.
 | `xtodo_model_tree_tests` | multi-level trees, subtree completion/restore, subtree deletion, drag reordering, indent/outdent, collapse cleanup |
 | `xtodo_model_list_tests` | multi-list isolation, list id generation, current-list selection, rename/delete, per-list completed expansion |
 | `xtodo_model_regression_tests` | regressions from recent git history: insert-after-subtree, completed-block ordering, list deletion selection, id collisions, deterministic invariant fuzzing |
-| `xtodo_store_format_tests` | `data.txt` v1-v4 parsing, latest v4 serialization, escaping, UI-state validation, theme-id key parsing, mount-mode migration |
+| `xtodo_store_format_tests` | `data.json` round-trip, UTF-8 fidelity, UI-state enum validation and range clamping, malformed/deeply-nested/non-object rejection, calendar normalization, safe defaults on empty input |
 | `xtodo_theme_tests` | color helpers, built-in theme catalog stability, contrast thresholds, theme resolution and fallback behavior |
 | `xtodo_i18n_tests` | all declared UI strings in zh/en, important behavioral strings, default language result validity |
 | `xtodo_gui_contract_tests` | headless GUI contracts for non-client hit-testing, geometry capture policy, title/tab/row layout hit-testing, popup menu item models, and inline edit key intents |

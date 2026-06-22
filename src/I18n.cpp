@@ -37,8 +37,8 @@ const wchar_t* T(Str key, Lang lang) {
                                            : L"Clear all completed items? This cannot be undone.";
         case Str::ConfirmOk:     return zh ? L"确认"            : L"OK";
         case Str::ConfirmCancel: return zh ? L"取消"            : L"Cancel";
-        case Str::LoadFailedMsg: return zh ? L"读取待办数据失败，原文件已备份为 data.txt.corrupt.bak，本次以空白开始。"
-                                           : L"Could not read your data. The original was backed up as data.txt.corrupt.bak; starting empty.";
+        case Str::LoadFailedMsg: return zh ? L"读取待办数据失败，原文件已备份为 data.json.corrupt.bak，本次以空白开始。"
+                                           : L"Could not read your data. The original was backed up as data.json.corrupt.bak; starting empty.";
 
         case Str::ThemeHeader:        return zh ? L"皮肤"           : L"Theme";
         case Str::ThemeFollowSystem:  return zh ? L"跟随系统"       : L"Follow system";

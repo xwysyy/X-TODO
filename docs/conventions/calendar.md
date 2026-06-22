@@ -28,17 +28,18 @@ instead.
 std::wstring title; }`. Week and month views derive all grouping from `day`, so
 no storage migration is needed to display them.
 
-Persistence stays on `XTODO v4`. The store reads and writes:
+Persistence is JSON in `data.json`. The store reads and writes:
 
-- `ui active_view` = `list | calendar`
-- `ui calendar_day` = the selected anchor, a real `YYYY-MM-DD`
-- `ui calendar_view` = `day | week | month`
-- `calendar <id> <day> <start> <end> <title>` block rows
+- `ui.activeView` = `list | calendar`
+- `ui.calendarDay` = the selected anchor, a real `YYYY-MM-DD`
+- `ui.calendarView` = `day | week | month`
+- a `calendar` array of `{ id, day, start, end, title }` block objects
 
-Parsing uses exact keys. Invalid block rows are ignored, duplicate block ids are
-re-assigned, and an unknown or missing `calendar_view` loads as `day`. A stored
-`calendar_day` that is not a real date falls back to today rather than entering
-week or month math as an impossible date.
+Parsing uses exact keys. Block objects with an invalid `day` are ignored,
+duplicate or non-positive ids are re-assigned, minute ranges are clamped, and an
+unknown or missing `calendarView` loads as `day`. A stored `calendarDay` that is
+not a real date falls back to today rather than entering week or month math as an
+impossible date.
 
 ## CalendarDate
 

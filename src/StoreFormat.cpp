@@ -3,14 +3,18 @@
 #include <algorithm>
 #include <cmath>
 #include <codecvt>
-#include <cstdio>
-#include <cstdlib>
-#include <cwchar>
 #include <locale>
+#include <string>
 #include <vector>
+
+#include "nlohmann/json.hpp"
+
+using nlohmann::json;
 
 namespace StoreFormat {
 namespace {
+
+constexpr int kMaxNestDepth = 32; // 合法数据嵌套 <= 4，防篡改/损坏文件让递归解析栈溢出
 
 std::wstring Utf8ToWide(const std::string& s) {
     if (s.empty()) return L"";
@@ -40,354 +44,254 @@ std::string WideToUtf8(const std::wstring& w) {
     }
 }
 
-std::vector<std::wstring> SplitLines(const std::wstring& text) {
-    std::vector<std::wstring> lines;
-    std::wstring cur;
-    for (wchar_t c : text) {
-        if (c == L'\n') { lines.push_back(cur); cur.clear(); }
-        else if (c != L'\r') cur += c;
+// parse 前字符级扫描最大括号嵌套深度（不递归），挡掉深嵌套 JSON，
+// 避免 nlohmann 递归下降解析栈溢出。镜像 ThemeLoader 的同名守护。
+int MaxBracketDepth(const std::string& s) {
+    int depth = 0, maxDepth = 0;
+    bool inStr = false, esc = false;
+    for (char c : s) {
+        if (inStr) {
+            if (esc) esc = false;
+            else if (c == '\\') esc = true;
+            else if (c == '"') inStr = false;
+        } else if (c == '"') {
+            inStr = true;
+        } else if (c == '{' || c == '[') {
+            if (++depth > maxDepth) maxDepth = depth;
+        } else if (c == '}' || c == ']') {
+            if (depth > 0) --depth;
+        }
     }
-    if (!cur.empty()) lines.push_back(cur);
-    return lines;
+    return maxDepth;
 }
 
-bool StartsWith(const std::wstring& s, const wchar_t* p) {
-    size_t n = std::wcslen(p);
-    return s.size() >= n && std::wcsncmp(s.c_str(), p, n) == 0;
-}
-
-bool ParseIntToken(const std::wstring& token, int& value) {
-    if (token.empty()) return false;
-    wchar_t* end = nullptr;
-    long parsed = std::wcstol(token.c_str(), &end, 10);
-    if (end != token.c_str() + token.size()) return false;
-    value = static_cast<int>(parsed);
-    return true;
-}
-
-bool IsAsciiDayKey(const std::wstring& value) {
-    if (value.size() != 10) return false;
-    std::string day(value.begin(), value.end());
-    return IsValidCalendarDayKey(day);
-}
-
-struct UiKeyValue {
-    std::wstring key;
-    std::wstring value;
-    bool valid = false;
-};
-
-UiKeyValue ParseExactUiKeyValue(const std::wstring& body) {
-    size_t eq = body.find(L'=');
-    if (eq == std::wstring::npos || eq == 0) return {};
-    UiKeyValue kv;
-    kv.key = body.substr(0, eq);
-    kv.value = body.substr(eq + 1);
-    while (!kv.value.empty() && (kv.value.back() == L' ' || kv.value.back() == L'\r'))
-        kv.value.pop_back();
-    kv.valid = true;
-    return kv;
-}
-
-bool IsValidThemeId(const std::wstring& v) {
+bool IsValidThemeId(const std::string& v) {
     if (v.size() < 3 || v.size() > 64) return false;
-    for (wchar_t c : v) {
-        bool ok = (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z') ||
-                  (c >= L'0' && c <= L'9') || c == L'.' || c == L'_' || c == L'-';
+    for (char c : v) {
+        bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                  (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
         if (!ok) return false;
     }
     return true;
 }
 
-std::wstring NarrowAsciiToWide(const std::string& s) {
-    return std::wstring(s.begin(), s.end());
+// 防御性取值：损坏但可解析的 JSON 不得在读取中途抛异常，缺失/类型不符回退默认。
+bool GetBool(const json& o, const char* key, bool def) {
+    auto it = o.find(key);
+    return (it != o.end() && it->is_boolean()) ? it->get<bool>() : def;
+}
+
+int GetInt(const json& o, const char* key, int def) {
+    auto it = o.find(key);
+    return (it != o.end() && it->is_number_integer()) ? it->get<int>() : def;
+}
+
+std::string GetUtf8(const json& o, const char* key) {
+    auto it = o.find(key);
+    return (it != o.end() && it->is_string()) ? it->get<std::string>() : std::string();
+}
+
+std::wstring GetWide(const json& o, const char* key) {
+    return Utf8ToWide(GetUtf8(o, key));
 }
 
 } // namespace
 
-std::wstring Escape(const std::wstring& in) {
-    std::wstring out;
-    out.reserve(in.size());
-    for (wchar_t c : in) {
-        switch (c) {
-            case L'\\': out += L"\\\\"; break;
-            case L'\n': out += L"\\n"; break;
-            case L'\r': break;
-            case L'\t': out += L"\\t"; break;
-            default:    out += c;       break;
-        }
-    }
-    return out;
-}
-
-std::wstring Unescape(const std::wstring& in) {
-    std::wstring out;
-    out.reserve(in.size());
-    for (size_t i = 0; i < in.size(); ++i) {
-        if (in[i] == L'\\' && i + 1 < in.size()) {
-            wchar_t n = in[++i];
-            if (n == L'n')       out += L'\n';
-            else if (n == L't')  out += L'\t';
-            else if (n == L'\\') out += L'\\';
-            else                 out += n;
-        } else {
-            out += in[i];
-        }
-    }
-    return out;
-}
-
-bool ParseCalendarLine(const std::wstring& line, CalendarBlock& block) {
-    std::wstring body = line.substr(9);
-    size_t idEnd = body.find(L' ');
-    size_t dayEnd = idEnd == std::wstring::npos ? std::wstring::npos : body.find(L' ', idEnd + 1);
-    size_t startEnd = dayEnd == std::wstring::npos ? std::wstring::npos : body.find(L' ', dayEnd + 1);
-    size_t endEnd = startEnd == std::wstring::npos ? std::wstring::npos : body.find(L' ', startEnd + 1);
-    if (idEnd == std::wstring::npos || dayEnd == std::wstring::npos ||
-        startEnd == std::wstring::npos || endEnd == std::wstring::npos) {
-        return false;
+bool Parse(const std::string& utf8, TodoModel& model, CalendarModel& calendar,
+           WindowGeometry& geom, UiState& ui) {
+    // 空文件或纯空白：当作首次运行，以安全默认值启动并视为成功。
+    const bool blank = std::all_of(utf8.begin(), utf8.end(), [](char c) {
+        return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+    });
+    if (blank) {
+        model.ReplaceLists({}, "");
+        calendar.ReplaceBlocks({});
+        return true;
     }
 
-    int id = 0, startMinute = 0, endMinute = 0;
-    if (!ParseIntToken(body.substr(0, idEnd), id)) return false;
-    const std::wstring dayWide = body.substr(idEnd + 1, dayEnd - idEnd - 1);
-    if (!IsAsciiDayKey(dayWide)) return false;
-    if (!ParseIntToken(body.substr(dayEnd + 1, startEnd - dayEnd - 1), startMinute)) return false;
-    if (!ParseIntToken(body.substr(startEnd + 1, endEnd - startEnd - 1), endMinute)) return false;
+    if (MaxBracketDepth(utf8) > kMaxNestDepth) return false;
 
-    block.id = id;
-    block.day = std::string(dayWide.begin(), dayWide.end());
-    block.startMinute = startMinute;
-    block.endMinute = endMinute;
-    block.title = Unescape(body.substr(endEnd + 1));
-    return true;
-}
+    json root = json::parse(utf8, nullptr, /*allow_exceptions=*/false);
+    if (root.is_discarded() || !root.is_object()) return false;
 
-bool ParseText(const std::wstring& text, TodoModel& model, CalendarModel& calendar,
-               WindowGeometry& geom, UiState& ui) {
-    const bool v2 = StartsWith(text, L"XTODO v2");
-    const bool v3 = StartsWith(text, L"XTODO v3");
-    const bool v4 = StartsWith(text, L"XTODO v4");
-    const bool multiList = v2 || v3 || v4;
-    std::vector<TodoItem> legacyItems;
-    std::vector<TodoList> lists;
-    std::vector<CalendarBlock> calendarBlocks;
-    TodoList* currentList = nullptr;
+    auto winIt = root.find("window");
+    if (winIt != root.end() && winIt->is_object()) {
+        const json& w = *winIt;
+        geom = { GetInt(w, "x", 0), GetInt(w, "y", 0),
+                 GetInt(w, "w", 0), GetInt(w, "h", 0), true };
+    }
+
     std::string selectedListId;
-
-    auto ensureCurrentList = [&]() -> TodoList& {
-        if (!currentList) {
-            TodoList list;
-            list.id = "inbox";
-            list.title = L"默认";
-            lists.push_back(std::move(list));
-            currentList = &lists.back();
+    auto uiIt = root.find("ui");
+    if (uiIt != root.end() && uiIt->is_object()) {
+        const json& u = *uiIt;
+        ui.alwaysOnTop = GetBool(u, "alwaysOnTop", ui.alwaysOnTop);
+        {
+            std::string v = GetUtf8(u, "mount");
+            if (v == "normal" || v == "desktop" || v == "capsule") ui.mountMode = v;
+            else if (v == "taskbar") ui.mountMode = "normal";
         }
-        return *currentList;
-    };
+        {
+            std::string v = GetUtf8(u, "lang");
+            if (v == "zh" || v == "en") ui.lang = v;
+        }
+        {
+            std::string v = GetUtf8(u, "themeMode");
+            if (v == "builtin" || v == "custom" || v == "follow_system") ui.themeMode = v;
+        }
+        { std::string v = GetUtf8(u, "themeId");      if (IsValidThemeId(v)) ui.themeId = v; }
+        { std::string v = GetUtf8(u, "lightThemeId"); if (IsValidThemeId(v)) ui.lightThemeId = v; }
+        { std::string v = GetUtf8(u, "darkThemeId");  if (IsValidThemeId(v)) ui.darkThemeId = v; }
+        {
+            std::string v = GetUtf8(u, "capsuleStyle");
+            if (v == "slim" || v == "dot") ui.capsuleStyle = v;
+        }
+        {
+            std::string v = GetUtf8(u, "capsuleDockEdge");
+            if (v == "left" || v == "right") ui.capsuleDockEdge = v;
+        }
+        {
+            auto it = u.find("capsuleDockT");
+            if (it != u.end() && it->is_number()) {
+                double d = it->get<double>();
+                if (std::isfinite(d)) ui.capsuleDockT = std::clamp(d, 0.0, 1.0);
+            }
+        }
+        {
+            auto it = u.find("capsuleMonitor");
+            if (it != u.end() && it->is_string()) ui.capsuleMonitor = it->get<std::string>();
+        }
+        {
+            std::string v = GetUtf8(u, "activeView");
+            if (v == "list" || v == "calendar") ui.activeView = v;
+        }
+        {
+            std::string v = GetUtf8(u, "calendarDay");
+            if (IsValidCalendarDayKey(v)) ui.calendarDay = v;
+        }
+        {
+            std::string v = GetUtf8(u, "calendarView");
+            if (v == "day") ui.calendarView = CalendarViewMode::Day;
+            else if (v == "week") ui.calendarView = CalendarViewMode::Week;
+            else if (v == "month") ui.calendarView = CalendarViewMode::Month;
+        }
+        selectedListId = GetUtf8(u, "currentList");
+    }
 
-    for (const auto& line : SplitLines(text)) {
-        if (StartsWith(line, L"item ")) {
-            // v2: item <0|1> <escaped text>
-            // v3: item <0|1> <level> <escaped text>
-            // v4: item <0|1> <level> <collapsed> <escaped text>
-            wchar_t flag = line.size() > 5 ? line[5] : L'0';
-            int level = 0;
-            bool collapsed = false;
-            std::wstring rest;
-            if (v3 || v4) {
-                size_t levelStart = 7;
-                size_t levelEnd = (line.size() > levelStart) ? line.find(L' ', levelStart) : std::wstring::npos;
-                if (levelEnd != std::wstring::npos) {
-                    int parsed = 0;
-                    bool levelParsed = false;
-                    if (ParseIntToken(line.substr(levelStart, levelEnd - levelStart), parsed)) {
-                        level = parsed;
-                        rest = line.substr(levelEnd + 1);
-                        levelParsed = true;
-                    } else {
-                        rest = line.substr(levelStart);
-                    }
-                    if (v4 && levelParsed) {
-                        size_t collapsedStart = levelEnd + 1;
-                        size_t collapsedEnd = (line.size() > collapsedStart) ? line.find(L' ', collapsedStart) : std::wstring::npos;
-                        if (collapsedEnd != std::wstring::npos) {
-                            std::wstring token = line.substr(collapsedStart, collapsedEnd - collapsedStart);
-                            if (token == L"0" || token == L"1") {
-                                collapsed = token == L"1";
-                                rest = line.substr(collapsedEnd + 1);
-                            }
-                        }
-                    } else if (!v4) {
-                        rest = line.substr(levelEnd + 1);
-                    }
-                } else if (line.size() > levelStart) {
-                    rest = line.substr(levelStart);
-                }
-            } else {
-                rest = line.size() >= 7 ? line.substr(7) : L"";
-            }
-            TodoItem it;
-            it.done = (flag == L'1');
-            it.level = ClampTodoLevel(level);
-            it.collapsed = collapsed;
-            it.text = Unescape(rest);
-            if (multiList) ensureCurrentList().items.push_back(std::move(it));
-            else           legacyItems.push_back(std::move(it));
-        } else if (StartsWith(line, L"list ")) {
-            std::wstring body = line.substr(5);
-            size_t first = body.find(L' ');
-            size_t second = (first == std::wstring::npos) ? std::wstring::npos : body.find(L' ', first + 1);
-            if (first != std::wstring::npos && second != std::wstring::npos && second > first + 1) {
-                TodoList list;
-                list.id = WideToUtf8(Unescape(body.substr(0, first)));
-                list.completedExpanded = body[first + 1] == L'1';
-                list.title = Unescape(body.substr(second + 1));
-                lists.push_back(std::move(list));
-                currentList = &lists.back();
-            }
-        } else if (StartsWith(line, L"calendar ")) {
+    std::vector<CalendarBlock> blocks;
+    auto calIt = root.find("calendar");
+    if (calIt != root.end() && calIt->is_array()) {
+        for (const json& b : *calIt) {
+            if (!b.is_object()) continue;
+            std::string day = GetUtf8(b, "day");
+            if (!IsValidCalendarDayKey(day)) continue; // 其余归一化（id 去重、分钟 clamp）交 ReplaceBlocks
             CalendarBlock block;
-            if (ParseCalendarLine(line, block)) calendarBlocks.push_back(std::move(block));
-        } else if (StartsWith(line, L"win ")) {
-            int x = 0, y = 0, w = 0, h = 0;
-            if (std::swscanf(line.c_str() + 4, L"%d %d %d %d", &x, &y, &w, &h) == 4) {
-                geom = { x, y, w, h, true };
-            }
-        } else if (StartsWith(line, L"ui ")) {
-            UiKeyValue kv = ParseExactUiKeyValue(line.substr(3));
-            if (!kv.valid) continue;
-            const std::wstring& k = kv.key;
-            const std::wstring& v = kv.value;
-            if (k == L"completed_expanded") {
-                ui.completedExpanded = (v == L"1");
-            } else if (k == L"current_list") {
-                selectedListId = WideToUtf8(Unescape(v));
-            } else if (k == L"always_on_top") {
-                ui.alwaysOnTop = (v == L"1");
-            } else if (k == L"mount") {
-                if (v == L"normal" || v == L"desktop" || v == L"capsule")
-                    ui.mountMode = std::string(v.begin(), v.end());
-                else if (v == L"taskbar")
-                    ui.mountMode = "normal";
-            } else if (k == L"lang") {
-                if (v == L"zh" || v == L"en")
-                    ui.lang = std::string(v.begin(), v.end());
-            } else if (k == L"theme_mode") {
-                if (v == L"builtin" || v == L"custom" || v == L"follow_system")
-                    ui.themeMode = std::string(v.begin(), v.end());
-            } else if (k == L"theme_id") {
-                if (IsValidThemeId(v)) ui.themeId = std::string(v.begin(), v.end());
-            } else if (k == L"light_theme_id") {
-                if (IsValidThemeId(v)) ui.lightThemeId = std::string(v.begin(), v.end());
-            } else if (k == L"dark_theme_id") {
-                if (IsValidThemeId(v)) ui.darkThemeId = std::string(v.begin(), v.end());
-            } else if (k == L"capsule_style") {
-                if (v == L"slim" || v == L"dot")
-                    ui.capsuleStyle = std::string(v.begin(), v.end());
-            } else if (k == L"capsule_dock_edge") {
-                if (v == L"left" || v == L"right")
-                    ui.capsuleDockEdge = std::string(v.begin(), v.end());
-            } else if (k == L"capsule_dock_t") {
-                wchar_t* end = nullptr;
-                double d = std::wcstod(v.c_str(), &end);
-                if (end != v.c_str() && std::isfinite(d))
-                    ui.capsuleDockT = std::clamp(d, 0.0, 1.0);
-            } else if (k == L"capsule_monitor") {
-                ui.capsuleMonitor = WideToUtf8(Unescape(v));
-            } else if (k == L"active_view") {
-                if (v == L"list" || v == L"calendar")
-                    ui.activeView = std::string(v.begin(), v.end());
-            } else if (k == L"calendar_day") {
-                if (IsAsciiDayKey(v))
-                    ui.calendarDay = std::string(v.begin(), v.end());
-            } else if (k == L"calendar_view") {
-                if (v == L"day") ui.calendarView = CalendarViewMode::Day;
-                else if (v == L"week") ui.calendarView = CalendarViewMode::Week;
-                else if (v == L"month") ui.calendarView = CalendarViewMode::Month;
-            }
+            block.id = GetInt(b, "id", 0);
+            block.day = day;
+            block.startMinute = GetInt(b, "start", 0);
+            block.endMinute = GetInt(b, "end", 0);
+            block.title = GetWide(b, "title");
+            blocks.push_back(std::move(block));
         }
     }
 
-    if (multiList) model.ReplaceLists(std::move(lists), selectedListId);
-    else           model.ReplaceAll(std::move(legacyItems), ui.completedExpanded);
-    calendar.ReplaceBlocks(std::move(calendarBlocks));
+    std::vector<TodoList> lists;
+    auto listsIt = root.find("lists");
+    if (listsIt != root.end() && listsIt->is_array()) {
+        for (const json& l : *listsIt) {
+            if (!l.is_object()) continue;
+            TodoList list;
+            list.id = GetUtf8(l, "id");
+            list.title = GetWide(l, "title");
+            list.completedExpanded = GetBool(l, "completedExpanded", false);
+            auto itemsIt = l.find("items");
+            if (itemsIt != l.end() && itemsIt->is_array()) {
+                for (const json& it : *itemsIt) {
+                    if (!it.is_object()) continue;
+                    TodoItem item;
+                    item.text = GetWide(it, "text");
+                    item.done = GetBool(it, "done", false);
+                    item.level = ClampTodoLevel(GetInt(it, "level", 0));
+                    item.collapsed = GetBool(it, "collapsed", false);
+                    list.items.push_back(std::move(item));
+                }
+            }
+            lists.push_back(std::move(list)); // 排序、activeCount、层级与折叠归一化交 ReplaceLists
+        }
+    }
+
+    model.ReplaceLists(std::move(lists), selectedListId);
+    calendar.ReplaceBlocks(std::move(blocks));
     return true;
 }
 
-std::wstring SerializeText(const TodoModel& model, const CalendarModel& calendar,
-                           const WindowGeometry& geom, const UiState& ui) {
-    std::wstring text = L"XTODO v4\n";
+std::string Serialize(const TodoModel& model, const CalendarModel& calendar,
+                      const WindowGeometry& geom, const UiState& ui) {
+    json root = json::object();
+
     if (geom.valid) {
-        wchar_t buf[128];
-        std::swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"win %d %d %d %d\n", geom.x, geom.y, geom.w, geom.h);
-        text += buf;
-    }
-    text += ui.alwaysOnTop ? L"ui always_on_top=1\n"
-                           : L"ui always_on_top=0\n";
-    {
-        std::wstring mw(ui.mountMode.begin(), ui.mountMode.end());
-        text += L"ui mount=" + mw + L"\n";
-    }
-    if (!ui.lang.empty()) {
-        std::wstring lw(ui.lang.begin(), ui.lang.end());
-        text += L"ui lang=" + lw + L"\n";
-    }
-    text += L"ui theme_mode=" + NarrowAsciiToWide(ui.themeMode) + L"\n";
-    text += L"ui theme_id=" + NarrowAsciiToWide(ui.themeId) + L"\n";
-    text += L"ui light_theme_id=" + NarrowAsciiToWide(ui.lightThemeId) + L"\n";
-    text += L"ui dark_theme_id=" + NarrowAsciiToWide(ui.darkThemeId) + L"\n";
-    text += L"ui capsule_style=" + NarrowAsciiToWide(ui.capsuleStyle) + L"\n";
-    text += L"ui capsule_dock_edge=" + NarrowAsciiToWide(ui.capsuleDockEdge) + L"\n";
-    {
-        wchar_t buf[64];
-        std::swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"ui capsule_dock_t=%.6f\n", ui.capsuleDockT);
-        text += buf;
-    }
-    if (!ui.capsuleMonitor.empty())
-        text += L"ui capsule_monitor=" + Escape(Utf8ToWide(ui.capsuleMonitor)) + L"\n";
-    text += L"ui active_view=" + NarrowAsciiToWide(ui.activeView == "calendar" ? "calendar" : "list") + L"\n";
-    if (IsValidCalendarDayKey(ui.calendarDay))
-        text += L"ui calendar_day=" + NarrowAsciiToWide(ui.calendarDay) + L"\n";
-    {
-        const wchar_t* viewName = ui.calendarView == CalendarViewMode::Week    ? L"week"
-                                  : ui.calendarView == CalendarViewMode::Month ? L"month"
-                                                                               : L"day";
-        text += std::wstring(L"ui calendar_view=") + viewName + L"\n";
+        json w = json::object();
+        w["x"] = geom.x;
+        w["y"] = geom.y;
+        w["w"] = geom.w;
+        w["h"] = geom.h;
+        root["window"] = std::move(w);
     }
 
-    const TodoList& current = model.CurrentList();
-    text += L"ui current_list=" + Escape(Utf8ToWide(current.id)) + L"\n";
+    json u = json::object();
+    u["alwaysOnTop"] = ui.alwaysOnTop;
+    u["mount"] = ui.mountMode;
+    if (!ui.lang.empty()) u["lang"] = ui.lang;
+    u["themeMode"] = ui.themeMode;
+    u["themeId"] = ui.themeId;
+    u["lightThemeId"] = ui.lightThemeId;
+    u["darkThemeId"] = ui.darkThemeId;
+    u["capsuleStyle"] = ui.capsuleStyle;
+    u["capsuleDockEdge"] = ui.capsuleDockEdge;
+    u["capsuleDockT"] = ui.capsuleDockT;
+    if (!ui.capsuleMonitor.empty()) u["capsuleMonitor"] = ui.capsuleMonitor;
+    u["activeView"] = (ui.activeView == "calendar") ? "calendar" : "list";
+    if (IsValidCalendarDayKey(ui.calendarDay)) u["calendarDay"] = ui.calendarDay;
+    u["calendarView"] = (ui.calendarView == CalendarViewMode::Week)    ? "week"
+                        : (ui.calendarView == CalendarViewMode::Month) ? "month"
+                                                                       : "day";
+    u["currentList"] = model.CurrentList().id;
+    root["ui"] = std::move(u);
 
+    json cal = json::array();
     for (const CalendarBlock& block : calendar.Blocks()) {
         if (!IsValidCalendarDayKey(block.day)) continue;
-        wchar_t buf[96];
-        std::swprintf(buf, sizeof(buf) / sizeof(buf[0]), L"calendar %d %ls %d %d ",
-                      block.id, NarrowAsciiToWide(block.day).c_str(),
-                      ClampCalendarMinute(block.startMinute),
-                      ClampCalendarMinute(block.endMinute));
-        text += buf;
-        text += Escape(block.title);
-        text += L"\n";
+        json b = json::object();
+        b["id"] = block.id;
+        b["day"] = block.day;
+        b["start"] = ClampCalendarMinute(block.startMinute);
+        b["end"] = ClampCalendarMinute(block.endMinute);
+        b["title"] = WideToUtf8(block.title);
+        cal.push_back(std::move(b));
     }
+    root["calendar"] = std::move(cal);
 
-    for (const auto& list : model.Lists()) {
-        text += L"list ";
-        text += Escape(Utf8ToWide(list.id));
-        text += list.completedExpanded ? L" 1 " : L" 0 ";
-        text += Escape(list.title);
-        text += L"\n";
-        for (const auto& it : list.items) {
-            text += L"item ";
-            text += it.done ? L"1 " : L"0 ";
-            wchar_t levelBuf[16];
-            std::swprintf(levelBuf, sizeof(levelBuf) / sizeof(levelBuf[0]), L"%d %d ", ClampTodoLevel(it.level), it.collapsed ? 1 : 0);
-            text += levelBuf;
-            text += Escape(it.text);
-            text += L"\n";
+    json lists = json::array();
+    for (const TodoList& list : model.Lists()) {
+        json items = json::array();
+        for (const TodoItem& it : list.items) {
+            json item = json::object();
+            item["text"] = WideToUtf8(it.text);
+            item["done"] = it.done;
+            item["level"] = ClampTodoLevel(it.level);
+            item["collapsed"] = it.collapsed;
+            items.push_back(std::move(item));
         }
+        json l = json::object();
+        l["id"] = list.id;
+        l["title"] = WideToUtf8(list.title);
+        l["completedExpanded"] = list.completedExpanded;
+        l["items"] = std::move(items);
+        lists.push_back(std::move(l));
     }
-    return text;
+    root["lists"] = std::move(lists);
+
+    return root.dump(2);
 }
 
 } // namespace StoreFormat

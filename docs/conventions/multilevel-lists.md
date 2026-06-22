@@ -9,16 +9,16 @@ Each `TodoItem` has a `level` in the range `0..3` and a `collapsed` flag.
 The item vector remains a flat preorder list. A subtree starts at an item and
 continues while following items have a greater level than the root item.
 
-The storage header for hierarchical items is `XTODO v4`. Item rows are:
+Items persist as JSON inside each list's `items` array in `data.json`:
 
-```text
-item <0|1> <level> <0|1 collapsed> <escaped text>
+```json
+{ "text": "...", "done": false, "level": 0, "collapsed": false }
 ```
 
-The reader must continue to accept `XTODO v2` and `XTODO v3`. `v2` item rows
-do not carry a level, so they load as `level = 0` and `collapsed = false`.
-`v3` item rows carry a level but no collapsed flag, so they load as
-`collapsed = false`.
+`level` is clamped to `0..3` on load and the loader re-normalizes levels,
+the active/completed partition, and collapsed flags, so a hand-edited file with
+out-of-range or inconsistent values still loads to a valid tree. There is no
+legacy text-format reader; the store reads and writes JSON only.
 
 ## Interaction
 

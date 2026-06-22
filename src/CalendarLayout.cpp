@@ -283,4 +283,239 @@ std::wstring FormatTimeText(int minute) {
     return std::wstring(buf);
 }
 
+namespace {
+
+// Header band geometry shared by day, week, and month frames.
+struct HeaderBand {
+    float pad = 0.0f;
+    float headerH = 0.0f;
+    Gui::Rect header;
+    Gui::Rect prev;
+    Gui::Rect next;
+    Gui::Rect today;
+};
+
+HeaderBand ComputeHeaderBand(float windowWidth, float dpiScale) {
+    const float pad = S(Theme::kPadX, dpiScale);
+    const float headerH = S(40.0f, dpiScale);
+    const float navSize = S(26.0f, dpiScale);
+    const float navTop = (headerH - navSize) * 0.5f;
+    const float todayW = S(46.0f, dpiScale);
+    const float gap = S(6.0f, dpiScale);
+
+    HeaderBand b;
+    b.pad = pad;
+    b.headerH = headerH;
+    b.header = Gui::Rect{ pad, 0.0f, windowWidth - pad, headerH };
+    b.prev = Gui::Rect{ pad, navTop, pad + navSize, navTop + navSize };
+    b.next = Gui::Rect{ windowWidth - pad - navSize, navTop, windowWidth - pad, navTop + navSize };
+    b.today = Gui::Rect{ b.next.left - gap - todayW, navTop, b.next.left - gap, navTop + navSize };
+    return b;
+}
+
+} // namespace
+
+ModeControl ComputeModeControl(float windowWidth, float dpiScale) {
+    const float headerH = S(40.0f, dpiScale);
+    const float segW = S(44.0f, dpiScale);
+    const float segH = S(24.0f, dpiScale);
+    const float top = (headerH - segH) * 0.5f;
+    const float left = windowWidth * 0.5f - segW * 1.5f;
+
+    ModeControl mc;
+    mc.day = Gui::Rect{ left, top, left + segW, top + segH };
+    mc.week = Gui::Rect{ left + segW, top, left + segW * 2.0f, top + segH };
+    mc.month = Gui::Rect{ left + segW * 2.0f, top, left + segW * 3.0f, top + segH };
+    return mc;
+}
+
+ModeHit HitTestModeControl(float x, float y, const ModeControl& mc) {
+    if (mc.day.Contains(x, y)) return ModeHit::Day;
+    if (mc.week.Contains(x, y)) return ModeHit::Week;
+    if (mc.month.Contains(x, y)) return ModeHit::Month;
+    return ModeHit::None;
+}
+
+WeekFrame ComputeWeekFrame(float windowWidth, float viewportHeight, float dpiScale) {
+    const HeaderBand band = ComputeHeaderBand(windowWidth, dpiScale);
+    const float gutterW = S(54.0f, dpiScale);
+    const float hourH = S(56.0f, dpiScale);
+    const float dayHeaderTop = band.headerH + S(8.0f, dpiScale);
+    const float dayHeaderH = S(22.0f, dpiScale);
+    const float timelineTop = dayHeaderTop + dayHeaderH;
+
+    WeekFrame out;
+    out.header = band.header;
+    out.prev = band.prev;
+    out.next = band.next;
+    out.today = band.today;
+    out.mode = ComputeModeControl(windowWidth, dpiScale);
+
+    float timelineBottom = viewportHeight;
+    if (timelineBottom < timelineTop) timelineBottom = timelineTop;
+
+    out.dayHeaderRow = Gui::Rect{ 0.0f, dayHeaderTop, windowWidth, dayHeaderTop + dayHeaderH };
+    out.timelineViewport = Gui::Rect{ 0.0f, timelineTop, windowWidth, timelineBottom };
+    out.gutter = Gui::Rect{ 0.0f, timelineTop, gutterW, timelineBottom };
+
+    const float laneLeft = gutterW;
+    const float laneRight = windowWidth - band.pad;
+    const float colW = (laneRight - laneLeft) / 7.0f;
+    for (int i = 0; i < 7; ++i) {
+        const float left = laneLeft + colW * static_cast<float>(i);
+        const float right = (i == 6) ? laneRight : laneLeft + colW * static_cast<float>(i + 1);
+        out.columns[(size_t)i] = Gui::Rect{ left, timelineTop, right, timelineBottom };
+        out.dayHeaders[(size_t)i] = Gui::Rect{ left, dayHeaderTop, right, dayHeaderTop + dayHeaderH };
+    }
+
+    out.hourHeight = hourH;
+    out.contentHeight = 24.0f * hourH;
+    return out;
+}
+
+std::vector<LaneSpan> PackDayLanes(const std::vector<TimeRange>& sortedSpans) {
+    std::vector<LaneSpan> out(sortedSpans.size());
+    std::vector<int> laneEnd; // end minute of the last block in each lane of the cluster
+    size_t clusterStart = 0;
+    int clusterMaxEnd = -1;
+
+    auto closeCluster = [&](size_t endIndex) {
+        const int count = laneEnd.empty() ? 1 : static_cast<int>(laneEnd.size());
+        for (size_t k = clusterStart; k < endIndex; ++k) out[k].laneCount = count;
+    };
+
+    for (size_t i = 0; i < sortedSpans.size(); ++i) {
+        const TimeRange& span = sortedSpans[i];
+        if (clusterMaxEnd >= 0 && span.startMinute >= clusterMaxEnd) {
+            closeCluster(i);
+            laneEnd.clear();
+            clusterStart = i;
+            clusterMaxEnd = -1;
+        }
+        int lane = -1;
+        for (size_t l = 0; l < laneEnd.size(); ++l) {
+            if (laneEnd[l] <= span.startMinute) { lane = static_cast<int>(l); break; }
+        }
+        if (lane < 0) {
+            lane = static_cast<int>(laneEnd.size());
+            laneEnd.push_back(span.endMinute);
+        } else {
+            laneEnd[(size_t)lane] = span.endMinute;
+        }
+        out[i].lane = lane;
+        if (span.endMinute > clusterMaxEnd) clusterMaxEnd = span.endMinute;
+    }
+    closeCluster(sortedSpans.size());
+    return out;
+}
+
+Gui::Rect ComputeWeekBlockRect(const WeekFrame& frame, int dayIndex, const LaneSpan& lane,
+                               int startMinute, int endMinute) {
+    if (dayIndex < 0) dayIndex = 0;
+    if (dayIndex > 6) dayIndex = 6;
+    const Gui::Rect& col = frame.columns[(size_t)dayIndex];
+
+    const float y1 = (static_cast<float>(ClampCalendarMinute(startMinute)) / 60.0f) * frame.hourHeight;
+    const float y2 = (static_cast<float>(ClampCalendarMinute(endMinute)) / 60.0f) * frame.hourHeight;
+    float bottom = y2;
+    const float minHeight = frame.hourHeight * (34.0f / 56.0f);
+    if (bottom < y1 + minHeight) bottom = y1 + minHeight;
+
+    const int laneCount = lane.laneCount > 0 ? lane.laneCount : 1;
+    const float w = col.Width() / static_cast<float>(laneCount);
+    const float left = col.left + w * static_cast<float>(lane.lane);
+    return Gui::Rect{ left + 1.0f, y1 + 1.0f, left + w - 1.0f, bottom - 1.0f };
+}
+
+WeekHitResult HitTestWeek(float x, float y, float scroll, float dpiScale,
+                          const WeekFrame& frame, const std::vector<WeekBlockRect>& blocks) {
+    (void)dpiScale;
+    if (frame.prev.Contains(x, y)) return WeekHitResult{ WeekHitKind::Prev, -1, -1 };
+    if (frame.next.Contains(x, y)) return WeekHitResult{ WeekHitKind::Next, -1, -1 };
+    if (frame.today.Contains(x, y)) return WeekHitResult{ WeekHitKind::Today, -1, -1 };
+    switch (HitTestModeControl(x, y, frame.mode)) {
+    case ModeHit::Day:   return WeekHitResult{ WeekHitKind::ModeDay, -1, -1 };
+    case ModeHit::Week:  return WeekHitResult{ WeekHitKind::ModeWeek, -1, -1 };
+    case ModeHit::Month: return WeekHitResult{ WeekHitKind::ModeMonth, -1, -1 };
+    case ModeHit::None:  break;
+    }
+    for (int i = 0; i < 7; ++i) {
+        if (frame.dayHeaders[(size_t)i].Contains(x, y)) return WeekHitResult{ WeekHitKind::DayHeader, i, -1 };
+    }
+    if (!frame.timelineViewport.Contains(x, y)) return WeekHitResult{};
+
+    const float docY = y - frame.timelineViewport.top + scroll;
+    for (const WeekBlockRect& block : blocks) {
+        const Gui::Rect& r = block.rect;
+        if (x < r.left || x >= r.right || docY < r.top || docY >= r.bottom) continue;
+        return WeekHitResult{ WeekHitKind::Block, block.dayIndex, block.blockId };
+    }
+    for (int i = 0; i < 7; ++i) {
+        if (x >= frame.columns[(size_t)i].left && x < frame.columns[(size_t)i].right) {
+            return WeekHitResult{ WeekHitKind::EmptyColumn, i, -1 };
+        }
+    }
+    return WeekHitResult{};
+}
+
+MonthFrame ComputeMonthFrame(float windowWidth, float viewportHeight, float dpiScale) {
+    const HeaderBand band = ComputeHeaderBand(windowWidth, dpiScale);
+    const float weekdayTop = band.headerH + S(8.0f, dpiScale);
+    const float weekdayH = S(20.0f, dpiScale);
+    const float gridTop = weekdayTop + weekdayH;
+
+    MonthFrame out;
+    out.header = band.header;
+    out.prev = band.prev;
+    out.next = band.next;
+    out.today = band.today;
+    out.mode = ComputeModeControl(windowWidth, dpiScale);
+
+    float gridBottom = viewportHeight;
+    if (gridBottom < gridTop) gridBottom = gridTop;
+    const float gridLeft = band.pad;
+    const float gridRight = windowWidth - band.pad;
+
+    out.weekdayRow = Gui::Rect{ gridLeft, weekdayTop, gridRight, weekdayTop + weekdayH };
+    out.grid = Gui::Rect{ gridLeft, gridTop, gridRight, gridBottom };
+
+    const float cellW = (gridRight - gridLeft) / 7.0f;
+    const float cellH = (gridBottom - gridTop) / 6.0f;
+    out.cellWidth = cellW;
+    out.cellHeight = cellH;
+
+    for (int c = 0; c < 7; ++c) {
+        const float left = gridLeft + cellW * static_cast<float>(c);
+        const float right = (c == 6) ? gridRight : gridLeft + cellW * static_cast<float>(c + 1);
+        out.weekdayHeaders[(size_t)c] = Gui::Rect{ left, weekdayTop, right, weekdayTop + weekdayH };
+    }
+    for (int r = 0; r < 6; ++r) {
+        for (int c = 0; c < 7; ++c) {
+            const float left = gridLeft + cellW * static_cast<float>(c);
+            const float right = (c == 6) ? gridRight : gridLeft + cellW * static_cast<float>(c + 1);
+            const float top = gridTop + cellH * static_cast<float>(r);
+            const float bottom = (r == 5) ? gridBottom : gridTop + cellH * static_cast<float>(r + 1);
+            out.cells[(size_t)(r * 7 + c)] = Gui::Rect{ left, top, right, bottom };
+        }
+    }
+    return out;
+}
+
+MonthHitResult HitTestMonth(float x, float y, float dpiScale, const MonthFrame& frame) {
+    (void)dpiScale;
+    if (frame.prev.Contains(x, y)) return MonthHitResult{ MonthHitKind::Prev, -1 };
+    if (frame.next.Contains(x, y)) return MonthHitResult{ MonthHitKind::Next, -1 };
+    if (frame.today.Contains(x, y)) return MonthHitResult{ MonthHitKind::Today, -1 };
+    switch (HitTestModeControl(x, y, frame.mode)) {
+    case ModeHit::Day:   return MonthHitResult{ MonthHitKind::ModeDay, -1 };
+    case ModeHit::Week:  return MonthHitResult{ MonthHitKind::ModeWeek, -1 };
+    case ModeHit::Month: return MonthHitResult{ MonthHitKind::ModeMonth, -1 };
+    case ModeHit::None:  break;
+    }
+    for (int i = 0; i < 42; ++i) {
+        if (frame.cells[(size_t)i].Contains(x, y)) return MonthHitResult{ MonthHitKind::Cell, i };
+    }
+    return MonthHitResult{};
+}
+
 } // namespace GuiCalendar

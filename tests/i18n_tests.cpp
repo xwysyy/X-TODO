@@ -13,17 +13,17 @@ namespace {
         Str::Show, Str::ModeNormal, Str::ModeDesktop, Str::ModeCapsule,
         Str::StyleSlim, Str::StyleDot, Str::Autostart, Str::ToggleLang,
     Str::Exit, Str::Calendar, Str::CalendarToday,
+    Str::CalendarModeDay, Str::CalendarModeWeek, Str::CalendarModeMonth,
     Str::EmptyListTitle, Str::EmptyActivePrompt, Str::NewTask, Str::ListNamePrompt,
     Str::ListDefault, Str::ListRename, Str::ListDelete,
     Str::ListDeleteMsg, Str::Completed, Str::Clear, Str::DeleteItemMsg,
     Str::ClearAllMsg, Str::ConfirmOk, Str::ConfirmCancel, Str::LoadFailedMsg,
     Str::ThemeHeader,
     Str::ThemeFollowSystem, Str::ThemePaper, Str::ThemeMint, Str::ThemeSky,
-    Str::ThemeRose, Str::ThemeSand, Str::ThemeGraphite, Str::ThemeInk,
-    Str::ThemeContrast, Str::ThemeCustom, Str::ThemeManager, Str::ThemeReload,
-    Str::ThemeOpenFolder, Str::ThemeExportCurrent, Str::ThemeIssues,
-    Str::ThemeNotices, Str::ThemeSetLightFollow, Str::ThemeSetDarkFollow,
-    Str::ThemeFallbackNotice, Str::ThemeHighContrastNotice,
+    Str::ThemeRose, Str::ThemeSand, Str::ThemeCustom, Str::ThemeManager,
+    Str::ThemeReload, Str::ThemeOpenFolder, Str::ThemeExportCurrent,
+    Str::ThemeIssues, Str::ThemeNotices, Str::ThemeSetLightFollow,
+    Str::ThemeSetDarkFollow, Str::ThemeFallbackNotice,
 };
 
 constexpr size_t kAllStringCount = sizeof(kAllStrings) / sizeof(kAllStrings[0]);

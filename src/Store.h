@@ -8,6 +8,12 @@ struct WindowGeometry {
     bool valid = false;
 };
 
+enum class CalendarViewMode {
+    Day,
+    Week,
+    Month,
+};
+
 struct UiState {
     bool completedExpanded = false;
     bool alwaysOnTop = true;
@@ -17,7 +23,7 @@ struct UiState {
     std::string themeMode    = "builtin";  // builtin | custom | follow_system
     std::string themeId      = "paper";    // builtin / custom 的当前选择
     std::string lightThemeId = "paper";    // follow_system 浅色
-    std::string darkThemeId  = "graphite"; // follow_system 深色
+    std::string darkThemeId  = "paper";    // follow_system 深色（已无深色内置主题）
     // 胶囊形态：外观样式 + 吸附边 + 沿边比例 + 所在显示器
     std::string capsuleStyle    = "slim";  // slim | dot
     std::string capsuleDockEdge = "right"; // left | right
@@ -25,6 +31,7 @@ struct UiState {
     std::string capsuleMonitor  = "";      // 显示器 szDevice（UTF-8），丢失时回退就近
     std::string activeView      = "list";  // list | calendar
     std::string calendarDay     = "";      // YYYY-MM-DD；空表示启动时使用本地日期
+    CalendarViewMode calendarView = CalendarViewMode::Day; // 日历视图：day | week | month
 };
 
 // 加载结果：区分"文件不存在"（可安全空启动）与"存在但读失败"（须防止覆盖丢失）。

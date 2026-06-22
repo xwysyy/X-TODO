@@ -87,6 +87,12 @@ private:
         CalendarBlock,
         CalendarResizeStart,
         CalendarResizeEnd,
+        CalendarModeDay,
+        CalendarModeWeek,
+        CalendarModeMonth,
+        CalendarWeekDayHeader,
+        CalendarWeekBlock,
+        CalendarMonthCell,
         Pin,
         Close,
         Menu,
@@ -109,6 +115,10 @@ private:
     void DrawTitleBar();
     void DrawListTabs();
     void DrawCalendarView(float windowWidth, float windowHeight);
+    void DrawCalendarDay(float windowWidth, float windowHeight);
+    void DrawCalendarWeek(float windowWidth, float windowHeight);
+    void DrawCalendarMonth(float windowWidth, float windowHeight);
+    void DrawCalendarModeControl();
     void DrawSection(); // 已完成折叠条（内容层，文档坐标）
     void DrawEmptyActivePrompt(bool hovered); // 空列表的居中提示（图标 + 文案 + 新建按钮）
     void DrawAddTaskRow(bool hovered);        // 列表底部常驻"新建待办"入口
@@ -146,6 +156,13 @@ private:
     void SetActiveView(MainView view);
     void SwitchCalendarDay(int deltaDays);
     void GoToCalendarToday();
+    CalendarViewMode calendarMode() const { return ui_.calendarView; }
+    void SetCalendarMode(CalendarViewMode mode);
+    void SwitchCalendarPeriod(int dir);
+    void DrillToCalendarDay(const std::string& dayKey);
+    std::string CalendarWeekDayKey(int dayIndex) const;
+    std::string CalendarMonthCellDayKey(int cellIndex) const;
+    void BuildCalendarWeekBlockRects();
     bool calendarActive() const { return activeView_ == MainView::Calendar; }
     bool calendarEditing() const { return calendarEditId_ >= 0; }
     void ClampCalendarScroll();
@@ -278,6 +295,10 @@ private:
     std::string calendarDay_;
     GuiCalendar::Frame calendarFrame_{};
     std::vector<GuiCalendar::BlockRect> calendarBlockRects_;
+    GuiCalendar::ModeControl calendarModeControl_{};
+    GuiCalendar::WeekFrame calendarWeekFrame_{};
+    GuiCalendar::MonthFrame calendarMonthFrame_{};
+    std::vector<GuiCalendar::WeekBlockRect> calendarWeekBlockRects_;
     float       calendarScroll_ = 0.0f;
     bool        calendarScrollInitialized_ = false;
     float       scroll_       = 0.0f;

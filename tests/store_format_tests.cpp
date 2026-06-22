@@ -15,13 +15,14 @@ void ExpectDefaultUi(const UiState& ui) {
     EXPECT_EQ(ui.themeMode, std::string("builtin"));
     EXPECT_EQ(ui.themeId, std::string("paper"));
     EXPECT_EQ(ui.lightThemeId, std::string("paper"));
-    EXPECT_EQ(ui.darkThemeId, std::string("graphite"));
+    EXPECT_EQ(ui.darkThemeId, std::string("paper"));
     EXPECT_EQ(ui.capsuleStyle, std::string("slim"));
     EXPECT_EQ(ui.capsuleDockEdge, std::string("right"));
     EXPECT_NEAR(ui.capsuleDockT, 0.5, 0.000001);
     EXPECT_EQ(ui.capsuleMonitor, std::string(""));
     EXPECT_EQ(ui.activeView, std::string("list"));
     EXPECT_EQ(ui.calendarDay, std::string(""));
+    EXPECT_TRUE(ui.calendarView == CalendarViewMode::Day);
 }
 
 void EscapeRoundTripKeepsOneLogicalLinePerItem() {
@@ -67,6 +68,7 @@ void SerializeRoundTripPreservesV4MultiListModelUiAndGeometry() {
     ui.capsuleMonitor = "\\\\.\\DISPLAY1";
     ui.activeView = "calendar";
     ui.calendarDay = "2026-06-22";
+    ui.calendarView = CalendarViewMode::Week;
 
     const int blockA = calendar.AddBlock("2026-06-22", 9 * 60 + 7, 10 * 60 + 3, L"Plan\tA");
     const int blockB = calendar.AddBlock("2026-06-23", 18 * 60, 19 * 60 + 30, L"Tomorrow\\B");
@@ -80,6 +82,7 @@ void SerializeRoundTripPreservesV4MultiListModelUiAndGeometry() {
     EXPECT_TRUE(text.find(L"ui current_list=list-1") != std::wstring::npos);
     EXPECT_TRUE(text.find(L"ui active_view=calendar") != std::wstring::npos);
     EXPECT_TRUE(text.find(L"ui calendar_day=2026-06-22") != std::wstring::npos);
+    EXPECT_TRUE(text.find(L"ui calendar_view=week") != std::wstring::npos);
     EXPECT_TRUE(text.find(L"calendar ") != std::wstring::npos);
 
     TodoModel loaded;
@@ -107,6 +110,7 @@ void SerializeRoundTripPreservesV4MultiListModelUiAndGeometry() {
     EXPECT_EQ(loadedUi.capsuleMonitor, std::string("\\\\.\\DISPLAY1"));
     EXPECT_EQ(loadedUi.activeView, std::string("calendar"));
     EXPECT_EQ(loadedUi.calendarDay, std::string("2026-06-22"));
+    EXPECT_TRUE(loadedUi.calendarView == CalendarViewMode::Week);
 
     EXPECT_EQ(loaded.ListCount(), 2);
     EXPECT_EQ(loaded.CurrentListIndex(), 1);
@@ -223,6 +227,8 @@ void UiParsingUsesExactKeysAndValidatesValues() {
         L"ui active_view=popup\n"
         L"ui calendar_day=2026-06-22\n"
         L"ui calendar_day=bad\n"
+        L"ui calendar_view=month\n"
+        L"ui calendar_view=bogus\n"
         L"ui unknown=value\n"
         L"list inbox 0 Inbox\n";
 
@@ -242,6 +248,7 @@ void UiParsingUsesExactKeysAndValidatesValues() {
     EXPECT_NEAR(ui.capsuleDockT, 1.0, 0.000001);
     EXPECT_EQ(ui.activeView, std::string("calendar"));
     EXPECT_EQ(ui.calendarDay, std::string("2026-06-22"));
+    EXPECT_TRUE(ui.calendarView == CalendarViewMode::Month);
     AssertInvariants(model);
 }
 

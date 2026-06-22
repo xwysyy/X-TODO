@@ -56,6 +56,19 @@ Clicking a day label or month cell selects that date and switches to day view
 only when the click target clearly means drill-in. Changing mode keeps the
 selected day inside the new period.
 
+### Anchor And Visible Period
+
+`calendarDay` is the selected anchor day and must be a real local date. Each
+mode derives its visible period from the anchor:
+
+- Day: `[calendarDay, calendarDay + 1 day)`.
+- Week: `[StartOfWeek(calendarDay), StartOfWeek(calendarDay) + 7 days)`.
+- Month: a 42-cell grid for the month containing `calendarDay`.
+
+Day and week navigation add or subtract days. Month navigation adds or subtracts
+months and keeps the day-of-month when possible, clamping to the last day of the
+target month otherwise (for example `Jan 31` to `Feb 28` or `Feb 29`).
+
 ## Data And Storage
 
 ### Calendar Blocks
@@ -86,13 +99,19 @@ The helpers should return pointers or lightweight views and keep sorting by
 
 ### UI State
 
-Extend `UiState` with a calendar mode:
+Runtime state uses an enum; only the store boundary uses strings. This avoids
+invalid intermediate values such as `calendarView == "wek"`.
 
 ```cpp
-std::string calendarView = "day"; // day | week | month
+enum class CalendarViewMode { Day, Week, Month };
+
+struct UiState {
+    // ...
+    CalendarViewMode calendarView = CalendarViewMode::Day;
+};
 ```
 
-Serialization should add:
+The store format serializes the mode as a string:
 
 ```text
 ui calendar_view=day
@@ -100,28 +119,40 @@ ui calendar_view=day
 
 Parsing rules:
 
-- Accept only `day`, `week`, or `month`.
-- Missing or invalid value loads as `day`.
-- Keep `calendar_day` as the selected anchor date.
+- Accept only `day`, `week`, or `month`; map to the enum at the store boundary.
+- Missing or invalid value loads as `Day`. Invalid lines are ignored, matching
+  the existing `active_view` handling.
+- `calendar_day` stays the selected anchor date.
 - Do not change the existing `active_view` behavior.
 
-Add `store_format_tests` coverage for valid mode, invalid mode, and old files
-without the key.
+Add `store_format_tests` coverage for the default, a valid round-trip, an
+invalid mode, and old files without the key.
 
 ## Date Utilities
 
-Calendar view modes need date arithmetic in one place. Add small helpers near
-the current day-key code or in a Win32-free date utility module:
+Calendar view modes need date arithmetic in one place. Put it in a Win32-free
+`CalendarDate.*` module so it is deterministic and unit-testable:
 
-- Parse `YYYY-MM-DD` to a date value.
-- Format date value to `YYYY-MM-DD`.
-- Offset by day count.
-- Get start of week.
-- Get month metadata: first day, number of days, leading blanks, trailing blanks.
+- Parse `YYYY-MM-DD` into a date value, rejecting impossible dates such as
+  `2026-02-31`, not only malformed strings.
+- Format a date value back to `YYYY-MM-DD`.
+- Leap-year and days-in-month rules.
+- Offset by day count using proleptic Gregorian day math, with no `mktime` or
+  timezone dependence.
+- Add months, clamping the day to the target month length so `2026-01-31` plus
+  one month becomes `2026-02-28`.
+- Start of week and month-grid metadata, added when week and month layout need
+  them.
 
-Week start should be a deliberate product decision. Use Monday as the first day
-unless the app already has a locale-specific rule by implementation time. The
-choice must be tested in `gui_contract_tests` or a date utility test.
+Today and the current minute may come from a tiny platform wrapper over
+`GetLocalTime`, but the date math itself lives in `CalendarDate.*`. The existing
+day-key helpers in `MainWindowView.cpp` move onto this module as each view starts
+consuming it.
+
+Week start is Monday for the first version, covered by a date utility test.
+
+A stored `calendar_day` that is not a real date falls back to today rather than
+entering week or month math as an impossible date.
 
 ## Layout Modules
 
@@ -162,12 +193,13 @@ Week view shows seven day columns over one vertical time axis. It should support
 - Double-click or explicit drill-in on a block opens day view and starts editing.
 - Drag creation may be deferred to day view in the first version.
 
-The first week view can use simple block collision handling:
+The first week view uses deterministic per-column lane packing, which keeps both
+readability and hit-testing stable:
 
-- Non-overlapping blocks use full column width.
-- Overlapping blocks share the column width in deterministic order.
-- If collision packing is deferred, stack overlapping blocks with clear
-  clipping and test that hit-testing still targets the top visible block.
+- Sort each day's blocks by `startMinute`, then `endMinute`, then `id`.
+- Assign each block in an overlapping cluster to the first free lane.
+- Block width is the column width divided by the cluster's lane count.
+- Hit-testing walks rendered rects in reverse paint order so the top block wins.
 
 ### Week Layout Contracts
 
@@ -191,7 +223,9 @@ Month view shows a six-row grid. It should support:
 - Today cell highlight.
 - Selected day cell highlight.
 - Out-of-month leading and trailing days in muted style.
-- Per-day block count or up to two compact titles.
+- A deterministic per-cell summary: a count when the cell is short, otherwise as
+  many compact titles as fit (sorted by start time) plus a `+N` overflow marker,
+  never changing cell geometry.
 - Click on a day cell selects that day.
 - Double-click or explicit drill-in opens day view for that day.
 
@@ -298,16 +332,26 @@ Manual checks should run on a real Windows build or a CI-produced artifact:
 
 ## Implementation Phases
 
-### Phase 1: Foundation
+### Phase 0: Date And State Foundation
 
+- Add `CalendarDate.*` with real-date parsing, day arithmetic, and month
+  arithmetic with day clamping, plus tests.
 - Add `CalendarViewMode` and `UiState::calendarView`.
-- Parse and serialize `ui calendar_view`.
-- Add date utility functions and tests.
-- Add calendar mode labels to i18n.
-- Add header mode-control hit-test contracts.
+- Parse and serialize `ui calendar_view`, with store-format tests.
 
-Deliverable: the app still behaves like the current day view, but state and
-tests are ready for multiple modes.
+Deliverable: the app still behaves like the current day view; the irreversible
+state and date foundation are in place and covered by Win32-free tests.
+
+### Phase 1: Shared Header
+
+- Add a shared calendar header layout that owns prev, next, today, and the
+  Day/Week/Month mode control.
+- Add calendar mode labels to i18n.
+- Add header and mode-control hit-test contracts.
+- Day mode keeps using the existing timeline.
+
+Deliverable: modes can be switched from the header; week and month may still
+show placeholders.
 
 ### Phase 2: Week View
 
@@ -344,6 +388,32 @@ cells.
 
 Deliverable: day, week, and month views share one calendar model and have stable
 navigation, layout, and persistence.
+
+## Implementation Status
+
+Win32-free contract layers are implemented and verified locally with the direct
+`g++` path (cmake is unavailable on this WSL host):
+
+- `CalendarDate.*`: real-date parsing, leap-year and month-length rules, day and
+  month arithmetic with clamping, Monday-based weekday, start of week, and month
+  grid start. Covered by `tests/calendar_date_tests.cpp` (7 cases, green).
+- `CalendarLayout` additions: shared Day/Week/Month mode control, `WeekFrame`
+  with seven columns, deterministic `PackDayLanes`, week block rects and
+  hit-testing, `MonthFrame` 42-cell grid and hit-testing. Covered by
+  `tests/calendar_layout_tests.cpp` (7 cases, green).
+- `UiState::calendarView` plus `CalendarViewMode` and `ui calendar_view`
+  persistence. Covered by `tests/store_format_tests.cpp` (green).
+- i18n labels `CalendarModeDay/Week/Month`. Covered by `tests/i18n_tests.cpp`.
+
+`gui_contract_tests` still passes (21 cases), so day-view contracts are intact.
+
+Pending and intentionally not written blind: the Win32 presentation and
+interaction wiring in `MainWindow.h` and `MainWindowView.cpp` (D2D rendering of
+the week and month grids, click routing by mode, header mode switching, per-mode
+navigation, drill-in, and `MainWindowView.cpp` date helpers moving onto
+`CalendarDate`). This layer cannot be compiled or verified on this host and, per
+`AGENTS.md`, requires Windows or CI evidence. It should be built directly on the
+verified contract layer above.
 
 ## Open Decisions
 

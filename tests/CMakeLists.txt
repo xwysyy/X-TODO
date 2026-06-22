@@ -64,3 +64,14 @@ add_xtodo_test(xtodo_gui_contract_tests
     ../src/WindowHitTest.cpp
     ../src/I18n.cpp
 )
+
+add_xtodo_test(xtodo_calendar_date_tests
+    calendar_date_tests.cpp
+    ../src/CalendarDate.cpp
+)
+
+add_xtodo_test(xtodo_calendar_layout_tests
+    calendar_layout_tests.cpp
+    ../src/CalendarLayout.cpp
+    ../src/CalendarModel.cpp
+)

@@ -2,6 +2,7 @@
 
 #include "GuiTypes.h"
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -81,5 +82,119 @@ bool ParseTimeText(const std::wstring& text, int& minute);
 bool ParseTimeRangeText(const std::wstring& startText, const std::wstring& endText,
                         TimeRange& range);
 std::wstring FormatTimeText(int minute);
+
+// ----------------------------------------------------------------------------
+// Shared Day/Week/Month mode control. Three equal segments in the header band.
+// ----------------------------------------------------------------------------
+
+struct ModeControl {
+    Gui::Rect day;
+    Gui::Rect week;
+    Gui::Rect month;
+};
+
+enum class ModeHit { None, Day, Week, Month };
+
+ModeControl ComputeModeControl(float windowWidth, float dpiScale);
+ModeHit HitTestModeControl(float x, float y, const ModeControl& mc);
+
+// ----------------------------------------------------------------------------
+// Week view: seven day columns over one shared vertical time axis.
+// ----------------------------------------------------------------------------
+
+struct WeekFrame {
+    Gui::Rect header;
+    Gui::Rect prev;
+    Gui::Rect next;
+    Gui::Rect today;
+    ModeControl mode;
+    Gui::Rect dayHeaderRow;
+    Gui::Rect timelineViewport;
+    Gui::Rect gutter;
+    std::array<Gui::Rect, 7> dayHeaders{};
+    std::array<Gui::Rect, 7> columns{};
+    float hourHeight = 0.0f;
+    float contentHeight = 0.0f;
+};
+
+enum class WeekHitKind {
+    None,
+    Prev,
+    Next,
+    Today,
+    ModeDay,
+    ModeWeek,
+    ModeMonth,
+    DayHeader,
+    Block,
+    EmptyColumn,
+};
+
+struct WeekHitResult {
+    WeekHitKind kind = WeekHitKind::None;
+    int dayIndex = -1;
+    int blockId = -1;
+};
+
+// Lane assignment for one day's blocks. laneCount is the column subdivision for
+// the block's overlap cluster.
+struct LaneSpan {
+    int lane = 0;
+    int laneCount = 1;
+};
+
+struct WeekBlockRect {
+    int blockId = -1;
+    int dayIndex = -1;
+    Gui::Rect rect;
+};
+
+WeekFrame ComputeWeekFrame(float windowWidth, float viewportHeight, float dpiScale);
+
+// Packs blocks already sorted by start, then end, then id, into deterministic
+// lanes. Returns one LaneSpan per input span, in the same order.
+std::vector<LaneSpan> PackDayLanes(const std::vector<TimeRange>& sortedSpans);
+
+Gui::Rect ComputeWeekBlockRect(const WeekFrame& frame, int dayIndex, const LaneSpan& lane,
+                               int startMinute, int endMinute);
+WeekHitResult HitTestWeek(float x, float y, float scroll, float dpiScale,
+                          const WeekFrame& frame, const std::vector<WeekBlockRect>& blocks);
+
+// ----------------------------------------------------------------------------
+// Month view: a fixed 42-cell grid (six weeks of seven days).
+// ----------------------------------------------------------------------------
+
+struct MonthFrame {
+    Gui::Rect header;
+    Gui::Rect prev;
+    Gui::Rect next;
+    Gui::Rect today;
+    ModeControl mode;
+    Gui::Rect weekdayRow;
+    std::array<Gui::Rect, 7> weekdayHeaders{};
+    Gui::Rect grid;
+    std::array<Gui::Rect, 42> cells{};
+    float cellWidth = 0.0f;
+    float cellHeight = 0.0f;
+};
+
+enum class MonthHitKind {
+    None,
+    Prev,
+    Next,
+    Today,
+    ModeDay,
+    ModeWeek,
+    ModeMonth,
+    Cell,
+};
+
+struct MonthHitResult {
+    MonthHitKind kind = MonthHitKind::None;
+    int cellIndex = -1;
+};
+
+MonthFrame ComputeMonthFrame(float windowWidth, float viewportHeight, float dpiScale);
+MonthHitResult HitTestMonth(float x, float y, float dpiScale, const MonthFrame& frame);
 
 } // namespace GuiCalendar

@@ -17,6 +17,9 @@ const wchar_t* T(Str key, Lang lang) {
         case Str::Exit:          return zh ? L"退出"            : L"Exit";
         case Str::Calendar:      return zh ? L"日历"            : L"Calendar";
         case Str::CalendarToday: return zh ? L"今天"            : L"Today";
+        case Str::CalendarModeDay:   return zh ? L"日"           : L"Day";
+        case Str::CalendarModeWeek:  return zh ? L"周"           : L"Week";
+        case Str::CalendarModeMonth: return zh ? L"月"           : L"Month";
         case Str::EmptyListTitle:return zh ? L"这个列表还没有待办" : L"No tasks here yet";
         case Str::EmptyActivePrompt:
                                   return zh ? L"新建一条，开始安排要做的事" : L"Add one to start planning.";
@@ -44,9 +47,6 @@ const wchar_t* T(Str key, Lang lang) {
         case Str::ThemeSky:           return zh ? L"天空"           : L"Sky";
         case Str::ThemeRose:          return zh ? L"玫瑰"           : L"Rose";
         case Str::ThemeSand:          return zh ? L"沙色"           : L"Sand";
-        case Str::ThemeGraphite:      return zh ? L"石墨"           : L"Graphite";
-        case Str::ThemeInk:           return zh ? L"墨色"           : L"Ink";
-        case Str::ThemeContrast:      return zh ? L"高对比"         : L"High contrast";
         case Str::ThemeCustom:        return zh ? L"自定义主题…"    : L"Custom themes…";
         case Str::ThemeManager:       return zh ? L"主题管理"       : L"Theme manager";
         case Str::ThemeReload:        return zh ? L"重新加载主题"   : L"Reload themes";
@@ -58,9 +58,6 @@ const wchar_t* T(Str key, Lang lang) {
         case Str::ThemeSetDarkFollow: return zh ? L"设为深色跟随主题" : L"Set as dark follow theme";
         case Str::ThemeFallbackNotice:return zh ? L"主题不可用，已回退到暖纸"
                                                 : L"Theme unavailable; fell back to Paper";
-        case Str::ThemeHighContrastNotice:
-                                      return zh ? L"Windows 高对比已开启，当前主题可能不易辨认"
-                                                : L"Windows High Contrast is on; the current theme may be hard to read";
         case Str::Count:
             break;
     }

@@ -301,6 +301,10 @@ bool ParseText(const std::wstring& text, TodoModel& model, CalendarModel& calend
             } else if (k == L"calendar_day") {
                 if (IsAsciiDayKey(v))
                     ui.calendarDay = std::string(v.begin(), v.end());
+            } else if (k == L"calendar_view") {
+                if (v == L"day") ui.calendarView = CalendarViewMode::Day;
+                else if (v == L"week") ui.calendarView = CalendarViewMode::Week;
+                else if (v == L"month") ui.calendarView = CalendarViewMode::Month;
             }
         }
     }
@@ -345,6 +349,12 @@ std::wstring SerializeText(const TodoModel& model, const CalendarModel& calendar
     text += L"ui active_view=" + NarrowAsciiToWide(ui.activeView == "calendar" ? "calendar" : "list") + L"\n";
     if (IsValidCalendarDayKey(ui.calendarDay))
         text += L"ui calendar_day=" + NarrowAsciiToWide(ui.calendarDay) + L"\n";
+    {
+        const wchar_t* viewName = ui.calendarView == CalendarViewMode::Week    ? L"week"
+                                  : ui.calendarView == CalendarViewMode::Month ? L"month"
+                                                                               : L"day";
+        text += std::wstring(L"ui calendar_view=") + viewName + L"\n";
+    }
 
     const TodoList& current = model.CurrentList();
     text += L"ui current_list=" + Escape(Utf8ToWide(current.id)) + L"\n";

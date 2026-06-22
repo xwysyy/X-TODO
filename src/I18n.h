@@ -15,6 +15,9 @@ enum class Str {
     Exit,         // 退出
     Calendar,     // 日历标签
     CalendarToday,// 日历回到今天按钮
+    CalendarModeDay,   // 日历视图：日
+    CalendarModeWeek,  // 日历视图：周
+    CalendarModeMonth, // 日历视图：月
     EmptyListTitle,// 空列表标题
     EmptyActivePrompt,// 空列表副说明
     NewTask,       // 新建待办按钮
@@ -39,9 +42,6 @@ enum class Str {
     ThemeSky,                // 天空
     ThemeRose,               // 玫瑰
     ThemeSand,               // 沙色
-    ThemeGraphite,           // 石墨
-    ThemeInk,                // 墨色
-    ThemeContrast,           // 高对比
     ThemeCustom,             // 自定义主题…（菜单入口）
     ThemeManager,            // 主题管理窗口标题
     ThemeReload,             // 重新加载主题
@@ -52,7 +52,6 @@ enum class Str {
     ThemeSetLightFollow,     // 设为浅色跟随主题
     ThemeSetDarkFollow,      // 设为深色跟随主题
     ThemeFallbackNotice,     // 主题回退提示
-    ThemeHighContrastNotice, // 高对比开启提示
 
     Count
 };

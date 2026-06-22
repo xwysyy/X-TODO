@@ -45,10 +45,29 @@ struct TimeRange {
     int endMinute = 15;
 };
 
+enum class EditField {
+    None,
+    Title,
+    StartTime,
+    EndTime,
+};
+
+struct EditLayout {
+    Gui::Rect block;
+    Gui::Rect titleFrame;
+    Gui::Rect titleEdit;
+    Gui::Rect startFrame;
+    Gui::Rect startEdit;
+    Gui::Rect endFrame;
+    Gui::Rect endEdit;
+};
+
 Frame ComputeFrame(float windowWidth, float viewportHeight, float dpiScale);
 Gui::Rect ComputeBlockRect(const Frame& frame, int blockId, int startMinute, int endMinute);
 HitResult HitTest(float x, float y, float scroll, float dpiScale, const Frame& frame,
                   const std::vector<BlockRect>& blocks);
+EditLayout ComputeEditLayout(const Gui::Rect& blockRect, float dpiScale);
+EditField HitTestEditField(float x, float y, const EditLayout& layout);
 
 int MinuteFromPoint(float y, float scroll, const Frame& frame);
 int SnapMinute(int minute, int stepMinutes = 15);
@@ -57,6 +76,8 @@ TimeRange RangeFromDrag(int anchorMinute, int currentMinute, int minDuration = 1
 float ScrollForMinute(int minute, float viewportHeight, const Frame& frame);
 
 bool ParseTimeText(const std::wstring& text, int& minute);
+bool ParseTimeRangeText(const std::wstring& startText, const std::wstring& endText,
+                        TimeRange& range);
 std::wstring FormatTimeText(int minute);
 
 } // namespace GuiCalendar

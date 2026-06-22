@@ -860,23 +860,18 @@ void MainWindow::DrawCalendarView(float W, float H) {
         const CalendarTheme::BlockColor& bc =
             conflict ? CalendarTheme::kConflict : CalendarTheme::BlockColorAt(idx);
 
-        D2D1_RECT_F r = ToD2DRect(blockRect.rect);
-        // 编辑态只保证最小高度容纳两行输入，不强行铺满或截断时间长度。
-        if (selected) {
-            const float minH = S(62);
-            if (r.bottom < r.top + minH) r.bottom = r.top + minH;
-        }
+        const GuiCalendar::EditLayout editLayout =
+            GuiCalendar::ComputeEditLayout(blockRect.rect, dpiScale());
+        D2D1_RECT_F r = ToD2DRect(selected ? editLayout.block : blockRect.rect);
         const float radius = S(7);
         FillRoundRect(D2D1_ROUNDED_RECT{ r, radius, radius }, bc.fill);
         StrokeRoundRect(D2D1_ROUNDED_RECT{ r, radius, radius },
                         selected ? theme_.colors.focusRing : bc.edge, S(selected ? 1.6f : 1.0f));
 
         if (selected) {
-            // 输入框由原生 EDIT 以同色绘制、无边框融入块内；仅在起止时间之间画一道细分隔。
-            const float sepX = r.left + S(8) + S(56) + S(5);
-            const float sepY = r.top + S(36) + S(10);
-            brush_->SetColor(Theme::D2DColor(CalendarTheme::kBlockTime));
-            rt_->DrawLine(D2D1::Point2F(sepX - S(3), sepY), D2D1::Point2F(sepX + S(3), sepY), brush_, S(1.2f));
+            DrawSurfaceFrame(ToD2DRect(editLayout.titleFrame), S(5), bc.fill, bc.edge, S(1));
+            DrawSurfaceFrame(ToD2DRect(editLayout.startFrame), S(5), bc.fill, bc.edge, S(1));
+            DrawSurfaceFrame(ToD2DRect(editLayout.endFrame), S(5), bc.fill, bc.edge, S(1));
         } else {
             D2D1_RECT_F titleR = r;
             titleR.left += S(8);
@@ -1061,6 +1056,11 @@ void MainWindow::OnLButtonDown(float x, float y) {
             const bool sameBlock =
                 (h.kind == HitKind::CalendarBlock || h.kind == HitKind::CalendarResizeStart ||
                  h.kind == HitKind::CalendarResizeEnd) && h.itemIndex == calendarEditId_;
+            if (!sameBlock && CalendarEditSurfaceContainsPoint(calendarEditId_, x, y)) {
+                pressHit_ = Hit{};
+                FocusCalendarEditor(CalendarEditFocusFromPoint(calendarEditId_, x, y), false);
+                return;
+            }
             if (!sameBlock) EndCalendarEdit(true);
         }
         pressHit_ = h;
@@ -1103,7 +1103,7 @@ void MainWindow::OnLButtonUp(float x, float y) {
         ResetCalendarDrag();
         if (mode == CalendarDragMode::Creating && calendar_.FindBlock(blockId)) {
             BuildCalendarBlockRects();
-            BeginCalendarEdit(blockId, true);
+            BeginCalendarEdit(blockId, CalendarEditFocus::Title);
             ScheduleSave();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
@@ -1116,7 +1116,10 @@ void MainWindow::OnLButtonUp(float x, float y) {
             return;
         }
         if (mode == CalendarDragMode::PendingBlock && calendar_.FindBlock(blockId)) {
-            BeginCalendarEdit(blockId, true);
+            CalendarEditFocus focus = CalendarEditFocusFromPoint(blockId, x, y);
+            if (pressHit_.kind == HitKind::CalendarResizeStart) focus = CalendarEditFocus::StartTime;
+            else if (pressHit_.kind == HitKind::CalendarResizeEnd) focus = CalendarEditFocus::EndTime;
+            BeginCalendarEdit(blockId, focus);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -1185,9 +1188,13 @@ void MainWindow::OnLButtonUp(float x, float y) {
     case HitKind::CalendarNextDay: SwitchCalendarDay(1);  break;
     case HitKind::CalendarToday:   GoToCalendarToday();   break;
     case HitKind::CalendarBlock:
+        BeginCalendarEdit(h.itemIndex, CalendarEditFocusFromPoint(h.itemIndex, x, y));
+        break;
     case HitKind::CalendarResizeStart:
+        BeginCalendarEdit(h.itemIndex, CalendarEditFocus::StartTime);
+        break;
     case HitKind::CalendarResizeEnd:
-        BeginCalendarEdit(h.itemIndex, true);
+        BeginCalendarEdit(h.itemIndex, CalendarEditFocus::EndTime);
         break;
     case HitKind::EmptyActive:
         CreateEmptyActiveItem();
@@ -1479,7 +1486,7 @@ void MainWindow::EnsureCalendarEditors() {
                  (LPARAM)(lang_ == Lang::Zh ? L"内容" : L"Title"));
 }
 
-void MainWindow::BeginCalendarEdit(int blockId, bool selectTitle) {
+void MainWindow::BeginCalendarEdit(int blockId, CalendarEditFocus focus) {
     const CalendarBlock* block = calendar_.FindBlock(blockId);
     if (!block) return;
     if (editing()) CommitEdit(false);
@@ -1505,11 +1512,7 @@ void MainWindow::BeginCalendarEdit(int blockId, bool selectTitle) {
     ShowWindow(calendarTitleEdit_, SW_SHOW);
     ShowWindow(calendarStartEdit_, SW_SHOW);
     ShowWindow(calendarEndEdit_, SW_SHOW);
-    SetFocus(calendarTitleEdit_);
-    if (selectTitle) {
-        int len = GetWindowTextLengthW(calendarTitleEdit_);
-        SendMessageW(calendarTitleEdit_, EM_SETSEL, 0, len);
-    }
+    FocusCalendarEditor(focus, true);
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
@@ -1517,8 +1520,7 @@ void MainWindow::EndCalendarEdit(bool removeEmpty) {
     if (!calendarEditing()) return;
     const int blockId = calendarEditId_;
     if (calendarTitleEdit_) calendar_.SetBlockTitle(blockId, ReadWindowText(calendarTitleEdit_));
-    CommitCalendarTimeEdit(calendarStartEdit_, true);
-    CommitCalendarTimeEdit(calendarEndEdit_, true);
+    CommitCalendarTimeEdits(true);
     calendarEditId_ = -1;
     HideCalendarEditors();
     if (removeEmpty && CalendarBlockTitleEmpty(blockId)) {
@@ -1564,27 +1566,28 @@ void MainWindow::LayoutCalendarEditControls() {
     }
     if (!found) { HideCalendarEditors(); return; }
 
-    // 几何与 DrawCalendarView 的编辑卡片输入框边框一一对齐。
+    // 几何与 DrawCalendarView 的编辑字段 frame 对齐，子 HWND 内缩避免盖住边框。
+    const GuiCalendar::EditLayout layout = GuiCalendar::ComputeEditLayout(rect, dpiScale());
     const float clientTop = ContentTop() + calendarFrame_.timelineViewport.top - calendarScroll_;
-    const int left = RoundToInt(rect.left + S(8));
-    const int width = RoundToInt(rect.right - rect.left - S(16));
-    const int titleTop = RoundToInt(clientTop + rect.top + S(7));
-    const int titleH = RoundToInt(S(22));
-    const int timeW = RoundToInt(S(56));
-    const int timeH = RoundToInt(S(20));
-    const int gap = RoundToInt(S(10));
-    const int timeTop = RoundToInt(clientTop + rect.top + S(36));
-
     const int viewportTop = RoundToInt(ContentTop() + calendarFrame_.timelineViewport.top);
     const int viewportBottom = RoundToInt(ContentTop() + calendarFrame_.timelineViewport.bottom);
-    if (titleTop >= viewportBottom || timeTop + timeH <= viewportTop || width <= 20) {
+    const int blockTop = RoundToInt(clientTop + layout.block.top);
+    const int blockBottom = RoundToInt(clientTop + layout.block.bottom);
+    if (blockTop >= viewportBottom || blockBottom <= viewportTop || layout.block.Width() <= S(40)) {
         HideCalendarEditors();
         return;
     }
 
-    MoveWindow(calendarTitleEdit_, left, titleTop, width, titleH, TRUE);
-    MoveWindow(calendarStartEdit_, left, timeTop, timeW, timeH, TRUE);
-    MoveWindow(calendarEndEdit_, left + timeW + gap, timeTop, timeW, timeH, TRUE);
+    auto moveEdit = [&](HWND edit, const Gui::Rect& editRect) {
+        const int left = RoundToInt(editRect.left);
+        const int top = RoundToInt(clientTop + editRect.top);
+        const int width = RoundToInt(editRect.Width());
+        const int height = RoundToInt(editRect.Height());
+        MoveWindow(edit, left, top, width, height, TRUE);
+    };
+    moveEdit(calendarTitleEdit_, layout.titleEdit);
+    moveEdit(calendarStartEdit_, layout.startEdit);
+    moveEdit(calendarEndEdit_, layout.endEdit);
     ShowWindow(calendarTitleEdit_, SW_SHOW);
     ShowWindow(calendarStartEdit_, SW_SHOW);
     ShowWindow(calendarEndEdit_, SW_SHOW);
@@ -1601,38 +1604,99 @@ void MainWindow::OnCalendarEditChanged(HWND edit) {
     // 否则刚敲到合法值块就跳走、和输入打架。
 }
 
-void MainWindow::CommitCalendarTimeEdit(HWND edit, bool syncText) {
-    if (!calendarEditing() || !edit) return;
-    CalendarBlock* block = calendar_.FindBlock(calendarEditId_);
-    if (!block) return;
-    int minute = 0;
-    if (!GuiCalendar::ParseTimeText(ReadWindowText(edit), minute)) return;
+bool MainWindow::CommitCalendarTimeEdits(bool syncText) {
+    if (!calendarEditing() || !calendarStartEdit_ || !calendarEndEdit_) return false;
+    if (!calendar_.FindBlock(calendarEditId_)) return false;
+    GuiCalendar::TimeRange range;
+    if (!GuiCalendar::ParseTimeRangeText(ReadWindowText(calendarStartEdit_),
+                                         ReadWindowText(calendarEndEdit_),
+                                         range))
+        return false;
 
-    int start = block->startMinute;
-    int end = block->endMinute;
-    if (edit == calendarStartEdit_) {
-        int duration = end - start;
-        if (duration < 1) duration = 1;
-        start = minute;
-        end = start + duration;
-        if (end > 1440) {
-            end = 1440;
-            start = end - duration;
-        }
-        if (start < 0) start = 0;
-    } else if (edit == calendarEndEdit_) {
-        end = minute;
-        if (end <= start) end = start + 1;
-        if (end > 1440) end = 1440;
-    }
-
-    if (calendar_.SetBlockRange(calendarEditId_, start, end)) {
+    if (calendar_.SetBlockRange(calendarEditId_, range.startMinute, range.endMinute)) {
         BuildCalendarBlockRects();
         LayoutCalendarEditControls();
         if (syncText) SyncCalendarEditors();
         ScheduleSave();
         InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
     }
+    return false;
+}
+
+bool MainWindow::CalendarEditSurfaceContainsPoint(int blockId, float x, float y) const {
+    Gui::Rect rect{};
+    bool found = false;
+    for (const GuiCalendar::BlockRect& blockRect : calendarBlockRects_) {
+        if (blockRect.blockId == blockId) {
+            rect = blockRect.rect;
+            found = true;
+            break;
+        }
+    }
+    if (!found) return false;
+
+    const float docY = y - ContentTop() - calendarFrame_.timelineViewport.top + calendarScroll_;
+    const GuiCalendar::EditLayout layout = GuiCalendar::ComputeEditLayout(rect, dpiScale());
+    return layout.block.Contains(x, docY);
+}
+
+MainWindow::CalendarEditFocus MainWindow::CalendarEditFocusFromPoint(int blockId,
+                                                                     float x,
+                                                                     float y) const {
+    Gui::Rect rect{};
+    bool found = false;
+    for (const GuiCalendar::BlockRect& blockRect : calendarBlockRects_) {
+        if (blockRect.blockId == blockId) {
+            rect = blockRect.rect;
+            found = true;
+            break;
+        }
+    }
+    if (!found) return CalendarEditFocus::Title;
+
+    const float docY = y - ContentTop() - calendarFrame_.timelineViewport.top + calendarScroll_;
+    const GuiCalendar::EditLayout layout = GuiCalendar::ComputeEditLayout(rect, dpiScale());
+    switch (GuiCalendar::HitTestEditField(x, docY, layout)) {
+    case GuiCalendar::EditField::StartTime: return CalendarEditFocus::StartTime;
+    case GuiCalendar::EditField::EndTime:   return CalendarEditFocus::EndTime;
+    case GuiCalendar::EditField::Title:
+    case GuiCalendar::EditField::None:
+        break;
+    }
+    if (docY >= rect.top + S(22.0f))
+        return x >= layout.endFrame.left ? CalendarEditFocus::EndTime
+                                         : CalendarEditFocus::StartTime;
+    return CalendarEditFocus::Title;
+}
+
+MainWindow::CalendarEditFocus MainWindow::CalendarEditFocusFromHwnd(HWND edit) const {
+    if (edit == calendarStartEdit_) return CalendarEditFocus::StartTime;
+    if (edit == calendarEndEdit_) return CalendarEditFocus::EndTime;
+    return CalendarEditFocus::Title;
+}
+
+MainWindow::CalendarEditFocus MainWindow::NextCalendarEditFocus(HWND edit, bool reverse) const {
+    const CalendarEditFocus current = CalendarEditFocusFromHwnd(edit);
+    if (!reverse) {
+        if (current == CalendarEditFocus::Title) return CalendarEditFocus::StartTime;
+        if (current == CalendarEditFocus::StartTime) return CalendarEditFocus::EndTime;
+        return CalendarEditFocus::Title;
+    }
+    if (current == CalendarEditFocus::Title) return CalendarEditFocus::EndTime;
+    if (current == CalendarEditFocus::EndTime) return CalendarEditFocus::StartTime;
+    return CalendarEditFocus::Title;
+}
+
+void MainWindow::FocusCalendarEditor(CalendarEditFocus focus, bool selectAll) {
+    HWND target = calendarTitleEdit_;
+    if (focus == CalendarEditFocus::StartTime) target = calendarStartEdit_;
+    else if (focus == CalendarEditFocus::EndTime) target = calendarEndEdit_;
+    if (!target) return;
+    SetFocus(target);
+    const int len = GetWindowTextLengthW(target);
+    if (selectAll) SendMessageW(target, EM_SETSEL, 0, len);
+    else SendMessageW(target, EM_SETSEL, len, len);
 }
 
 bool MainWindow::CalendarBlockTitleEmpty(int blockId) const {
@@ -1660,26 +1724,27 @@ LRESULT CALLBACK MainWindow::CalendarEditProcStatic(HWND h, UINT m, WPARAM w, LP
     MainWindow* self = reinterpret_cast<MainWindow*>(ref);
     switch (m) {
     case WM_GETDLGCODE:
-        return DefSubclassProc(h, m, w, l) | DLGC_WANTALLKEYS;
+        return DefSubclassProc(h, m, w, l) | DLGC_WANTALLKEYS | DLGC_WANTTAB;
     case WM_KEYDOWN:
         if (w == VK_ESCAPE) {
             self->EndCalendarEdit(true);
             return 0;
         }
+        if (w == VK_TAB) {
+            const bool reverse = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            self->FocusCalendarEditor(self->NextCalendarEditFocus(h, reverse), true);
+            return 0;
+        }
         if (w == VK_RETURN) {
-            if (h == self->calendarStartEdit_ || h == self->calendarEndEdit_)
-                self->CommitCalendarTimeEdit(h, true);
             self->EndCalendarEdit(true);
             return 0;
         }
         break;
     case WM_CHAR:
-        if (w == L'\r' || w == 0x1B) return 0;
+        if (w == L'\r' || w == L'\t' || w == 0x1B) return 0;
         break;
     case WM_KILLFOCUS: {
         HWND next = reinterpret_cast<HWND>(w);
-        if (h == self->calendarStartEdit_ || h == self->calendarEndEdit_)
-            self->CommitCalendarTimeEdit(h, true);
         if (next == self->calendarTitleEdit_ || next == self->calendarStartEdit_ || next == self->calendarEndEdit_)
             break;
         self->EndCalendarEdit(true);

@@ -141,6 +141,7 @@ private:
     static LRESULT CALLBACK EditProcStatic(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 
     // —— 日历编辑（独立顶层标签页，不影响 TodoModel 当前列表）——
+    enum class CalendarEditFocus { Title, StartTime, EndTime };
     void EnsureCalendarDay();
     void SetActiveView(MainView view);
     void SwitchCalendarDay(int deltaDays);
@@ -150,14 +151,19 @@ private:
     void ClampCalendarScroll();
     void AlignCalendarScrollToNow(bool force);
     void BuildCalendarBlockRects();
-    void BeginCalendarEdit(int blockId, bool selectTitle);
+    void BeginCalendarEdit(int blockId, CalendarEditFocus focus);
     void EndCalendarEdit(bool removeEmpty);
     void HideCalendarEditors();
     void EnsureCalendarEditors();
     void SyncCalendarEditors();
     void LayoutCalendarEditControls();
     void OnCalendarEditChanged(HWND edit);
-    void CommitCalendarTimeEdit(HWND edit, bool syncText);
+    bool CommitCalendarTimeEdits(bool syncText);
+    bool CalendarEditSurfaceContainsPoint(int blockId, float x, float y) const;
+    CalendarEditFocus CalendarEditFocusFromPoint(int blockId, float x, float y) const;
+    CalendarEditFocus CalendarEditFocusFromHwnd(HWND edit) const;
+    CalendarEditFocus NextCalendarEditFocus(HWND edit, bool reverse) const;
+    void FocusCalendarEditor(CalendarEditFocus focus, bool selectAll);
     bool CalendarBlockTitleEmpty(int blockId) const;
     void ResetCalendarDrag();
     void CancelCalendarCapture();

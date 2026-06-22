@@ -438,6 +438,55 @@ void CalendarHeaderButtonsLayout() {
     EXPECT_TRUE(frame.timelineViewport.top < frame.timelineViewport.bottom);
 }
 
+void CalendarEditLayoutSeparatesFieldsAndChildEdits() {
+    const GuiCalendar::Frame frame = GuiCalendar::ComputeFrame(320.0f, 500.0f, 1.0f);
+    const Gui::Rect block = GuiCalendar::ComputeBlockRect(frame, 3, 9 * 60, 9 * 60 + 15);
+    const GuiCalendar::EditLayout layout = GuiCalendar::ComputeEditLayout(block, 1.0f);
+
+    EXPECT_TRUE(layout.block.bottom >= block.top + 68.0f);
+    EXPECT_TRUE(layout.titleFrame.left > layout.block.left);
+    EXPECT_TRUE(layout.titleFrame.right < layout.block.right);
+    EXPECT_TRUE(layout.titleEdit.left > layout.titleFrame.left);
+    EXPECT_TRUE(layout.titleEdit.right < layout.titleFrame.right);
+    EXPECT_TRUE(layout.titleEdit.top > layout.titleFrame.top);
+    EXPECT_TRUE(layout.titleEdit.bottom < layout.titleFrame.bottom);
+
+    EXPECT_TRUE(layout.startFrame.left == layout.titleFrame.left);
+    EXPECT_TRUE(layout.startFrame.right < layout.endFrame.left);
+    EXPECT_TRUE(layout.endFrame.right <= layout.titleFrame.right);
+    EXPECT_TRUE(layout.startEdit.left > layout.startFrame.left);
+    EXPECT_TRUE(layout.endEdit.right < layout.endFrame.right);
+
+    EXPECT_EQ(GuiCalendar::HitTestEditField(Mid(layout.titleFrame.left, layout.titleFrame.right),
+                                            Mid(layout.titleFrame.top, layout.titleFrame.bottom),
+                                            layout),
+              GuiCalendar::EditField::Title);
+    EXPECT_EQ(GuiCalendar::HitTestEditField(Mid(layout.startFrame.left, layout.startFrame.right),
+                                            Mid(layout.startFrame.top, layout.startFrame.bottom),
+                                            layout),
+              GuiCalendar::EditField::StartTime);
+    EXPECT_EQ(GuiCalendar::HitTestEditField(Mid(layout.endFrame.left, layout.endFrame.right),
+                                            Mid(layout.endFrame.top, layout.endFrame.bottom),
+                                            layout),
+              GuiCalendar::EditField::EndTime);
+}
+
+void CalendarTimeRangeParsingIsAtomicAndStrict() {
+    GuiCalendar::TimeRange range;
+    EXPECT_TRUE(GuiCalendar::ParseTimeRangeText(L"09:30", L"10:00", range));
+    EXPECT_EQ(range.startMinute, 9 * 60 + 30);
+    EXPECT_EQ(range.endMinute, 10 * 60);
+
+    EXPECT_TRUE(GuiCalendar::ParseTimeRangeText(L"23:59", L"24:00", range));
+    EXPECT_EQ(range.startMinute, 23 * 60 + 59);
+    EXPECT_EQ(range.endMinute, 24 * 60);
+
+    EXPECT_FALSE(GuiCalendar::ParseTimeRangeText(L"10:00", L"09:30", range));
+    EXPECT_FALSE(GuiCalendar::ParseTimeRangeText(L"09:30", L"09:30", range));
+    EXPECT_FALSE(GuiCalendar::ParseTimeRangeText(L"bad", L"10:00", range));
+    EXPECT_FALSE(GuiCalendar::ParseTimeRangeText(L"09:30", L"24:01", range));
+}
+
 const TestCase kTests[] = {
     {"NonClientHitTestPrioritizesTitleButtonsOverResizeBand", NonClientHitTestPrioritizesTitleButtonsOverResizeBand},
     {"NonClientHitTestMapsEdgesCornersCaptionAndCapsule", NonClientHitTestMapsEdgesCornersCaptionAndCapsule},
@@ -457,6 +506,8 @@ const TestCase kTests[] = {
     {"CalendarLayoutSnapsDragCreationAndParsesMinutePrecision", CalendarLayoutSnapsDragCreationAndParsesMinutePrecision},
     {"CalendarHitTestingUsesBlockRectsAndResizeHandles", CalendarHitTestingUsesBlockRectsAndResizeHandles},
     {"CalendarHeaderButtonsLayout", CalendarHeaderButtonsLayout},
+    {"CalendarEditLayoutSeparatesFieldsAndChildEdits", CalendarEditLayoutSeparatesFieldsAndChildEdits},
+    {"CalendarTimeRangeParsingIsAtomicAndStrict", CalendarTimeRangeParsingIsAtomicAndStrict},
 };
 
 } // namespace

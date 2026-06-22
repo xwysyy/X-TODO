@@ -83,6 +83,71 @@ HitResult HitTest(float x, float y, float scroll, float dpiScale, const Frame& f
     return {};
 }
 
+EditLayout ComputeEditLayout(const Gui::Rect& blockRect, float dpiScale) {
+    EditLayout out;
+    out.block = blockRect;
+
+    const float minH = S(68.0f, dpiScale);
+    if (out.block.bottom < out.block.top + minH) out.block.bottom = out.block.top + minH;
+
+    const float padX = S(8.0f, dpiScale);
+    const float padTop = S(7.0f, dpiScale);
+    const float frameInset = S(2.0f, dpiScale);
+    const float titleH = S(22.0f, dpiScale);
+    const float timeH = S(22.0f, dpiScale);
+    const float gapY = S(7.0f, dpiScale);
+    const float gapX = S(10.0f, dpiScale);
+    const float minTimeW = S(44.0f, dpiScale);
+    const float preferredTimeW = S(64.0f, dpiScale);
+
+    const float contentLeft = out.block.left + padX;
+    const float contentRight = out.block.right - padX;
+    const float contentW = contentRight - contentLeft;
+    float timeW = preferredTimeW;
+    if (contentW < timeW * 2.0f + gapX) timeW = (contentW - gapX) * 0.5f;
+    if (timeW < minTimeW) timeW = minTimeW;
+
+    out.titleFrame = Gui::Rect{
+        contentLeft,
+        out.block.top + padTop,
+        contentRight,
+        out.block.top + padTop + titleH
+    };
+    out.startFrame = Gui::Rect{
+        contentLeft,
+        out.titleFrame.bottom + gapY,
+        contentLeft + timeW,
+        out.titleFrame.bottom + gapY + timeH
+    };
+    out.endFrame = Gui::Rect{
+        out.startFrame.right + gapX,
+        out.startFrame.top,
+        out.startFrame.right + gapX + timeW,
+        out.startFrame.bottom
+    };
+
+    auto editRect = [&](const Gui::Rect& frame) {
+        return Gui::Rect{
+            frame.left + frameInset,
+            frame.top + frameInset,
+            frame.right - frameInset,
+            frame.bottom - frameInset
+        };
+    };
+    out.titleEdit = editRect(out.titleFrame);
+    out.startEdit = editRect(out.startFrame);
+    out.endEdit = editRect(out.endFrame);
+    return out;
+}
+
+EditField HitTestEditField(float x, float y, const EditLayout& layout) {
+    if (layout.startFrame.Contains(x, y)) return EditField::StartTime;
+    if (layout.endFrame.Contains(x, y)) return EditField::EndTime;
+    if (layout.titleFrame.Contains(x, y)) return EditField::Title;
+    if (layout.block.Contains(x, y)) return EditField::Title;
+    return EditField::None;
+}
+
 int MinuteFromPoint(float y, float scroll, const Frame& frame) {
     const float docY = y - frame.timelineViewport.top + scroll;
     if (frame.hourHeight <= 0.0f) return 0;
@@ -153,6 +218,17 @@ bool ParseTimeText(const std::wstring& text, int& minute) {
     if (hour < 0 || hour > 24 || mins < 0 || mins > 59) return false;
     if (hour == 24 && mins != 0) return false;
     minute = hour * 60 + mins;
+    return true;
+}
+
+bool ParseTimeRangeText(const std::wstring& startText, const std::wstring& endText,
+                        TimeRange& range) {
+    int start = 0;
+    int end = 0;
+    if (!ParseTimeText(startText, start)) return false;
+    if (!ParseTimeText(endText, end)) return false;
+    if (start < 0 || end > 1440 || end <= start) return false;
+    range = TimeRange{ start, end };
     return true;
 }
 

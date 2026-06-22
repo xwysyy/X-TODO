@@ -866,7 +866,7 @@ void MainWindow::DrawCalendarView(float W, float H) {
         const float radius = S(7);
         FillRoundRect(D2D1_ROUNDED_RECT{ r, radius, radius }, bc.fill);
         StrokeRoundRect(D2D1_ROUNDED_RECT{ r, radius, radius },
-                        selected ? theme_.colors.focusRing : bc.edge, S(selected ? 1.6f : 1.0f));
+                        bc.edge, S(selected ? 1.6f : 1.0f));
 
         if (selected) {
             auto focusField = [&]() {
@@ -880,8 +880,7 @@ void MainWindow::DrawCalendarView(float W, float H) {
             };
             auto drawEditFrame = [&](GuiCalendar::EditField field, const Gui::Rect& rect) {
                 const bool active = field == focusField();
-                DrawSurfaceFrame(ToD2DRect(rect), S(5), bc.fill,
-                                 active ? theme_.colors.focusRing : bc.edge,
+                DrawSurfaceFrame(ToD2DRect(rect), S(5), bc.fill, bc.edge,
                                  S(active ? 1.5f : 1.0f));
             };
             drawEditFrame(GuiCalendar::EditField::Title, editLayout.titleFrame);

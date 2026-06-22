@@ -104,6 +104,9 @@ version.
 - An empty new block is removed only on outside click, Escape, starting another
   action, collapsing, or exit, not when the mouse merely leaves it.
 - Blocks render flat: no side bar, drop shadow, or inner highlight.
+- Non-editing block titles wrap inside the block. Short or narrow blocks
+  prioritize the title; the time range appears only when width and height leave
+  enough room.
 
 ## Week View
 
@@ -115,12 +118,22 @@ Per-day blocks are packed into deterministic lanes:
 - Block width is the column width divided by the cluster's lane count.
 - Hit-testing walks rendered rects in reverse paint order so the top block wins.
 
+Week block text uses the same timeline block text policy as day view. The title
+wraps inside the rendered block, narrow lanes hide the time range before
+crowding the title, and taller blocks expose more title lines instead of leaving
+all text pinned to the top-left corner.
+
 ## Month View
 
 A fixed 42-cell grid (six weeks of seven days). Leading and trailing out-of-month
 days render muted. Each cell shows a deterministic summary: a count when the cell
 is short, otherwise as many compact titles as fit plus a `+N` overflow marker.
 Summary rendering never resizes a cell.
+
+Month summaries use a per-cell line budget. A single long title may consume
+multiple lines when the cell has room, multiple titles are capped to compact
+multi-line snippets, and `+N` is reserved before the cell overflows. Long titles
+wrap within the cell; they must not paint into adjacent cells or resize the grid.
 
 ## Rendering And Verification
 

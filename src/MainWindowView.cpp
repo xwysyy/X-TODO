@@ -6,6 +6,7 @@
 #include "ViewLayout.h"
 #include "WindowHitTest.h"
 
+#include <algorithm>
 #include <commctrl.h>
 #include <cmath>
 #include <ctime>
@@ -131,6 +132,25 @@ std::wstring MakeBreakableText(const std::wstring& text) {
         }
         run++;
         if (IsWrapDelimiter(ch) || run >= 24) {
+            out.push_back(L'\x200B');
+            run = 0;
+        }
+    }
+    return out;
+}
+
+std::wstring MakeCalendarBreakableText(const std::wstring& text) {
+    std::wstring out;
+    out.reserve(text.size() + text.size() / 8);
+    int run = 0;
+    for (wchar_t ch : text) {
+        out.push_back(ch);
+        if (ch == L' ' || ch == L'\t' || ch == L'\r' || ch == L'\n') {
+            run = 0;
+            continue;
+        }
+        run++;
+        if (IsWrapDelimiter(ch) || run >= 8) {
             out.push_back(L'\x200B');
             run = 0;
         }
@@ -534,6 +554,91 @@ void MainWindow::Text(const std::wstring& s, const D2D1_RECT_F& r, uint32_t rgb,
     rt_->DrawTextW(s.c_str(), (UINT32)s.size(), fmt, r, brush_);
 }
 
+float MainWindow::MeasureCalendarText(const std::wstring& text, const D2D1_RECT_F& rect) {
+    if (!dwrite_ || !calendarTextFormat_ || text.empty()) return 0.0f;
+    const float w = rect.right - rect.left;
+    const float h = rect.bottom - rect.top;
+    if (w <= S(6) || h <= S(6)) return 0.0f;
+
+    const std::wstring breakable = MakeCalendarBreakableText(text);
+    IDWriteTextLayout* layout = nullptr;
+    HRESULT hr = dwrite_->CreateTextLayout(breakable.c_str(), (UINT32)breakable.size(),
+                                           calendarTextFormat_, w, h, &layout);
+    if (FAILED(hr) || !layout) return 0.0f;
+
+    DWRITE_TEXT_METRICS tm{};
+    float measured = 0.0f;
+    if (SUCCEEDED(layout->GetMetrics(&tm))) {
+        measured = std::ceil(tm.height);
+        if (measured > h) measured = h;
+    }
+    layout->Release();
+    return measured;
+}
+
+float MainWindow::DrawCalendarWrappedText(const std::wstring& text, const D2D1_RECT_F& rect,
+                                          uint32_t color) {
+    if (!dwrite_ || !calendarTextFormat_ || !rt_ || text.empty()) return 0.0f;
+    const float w = rect.right - rect.left;
+    const float h = rect.bottom - rect.top;
+    if (w <= S(6) || h <= S(6)) return 0.0f;
+
+    const std::wstring breakable = MakeCalendarBreakableText(text);
+    IDWriteTextLayout* layout = nullptr;
+    HRESULT hr = dwrite_->CreateTextLayout(breakable.c_str(), (UINT32)breakable.size(),
+                                           calendarTextFormat_, w, h, &layout);
+    if (FAILED(hr) || !layout) return 0.0f;
+
+    DWRITE_TEXT_METRICS tm{};
+    float measured = h;
+    if (SUCCEEDED(layout->GetMetrics(&tm))) {
+        measured = std::ceil(tm.height);
+        if (measured > h) measured = h;
+    }
+
+    brush_->SetColor(Theme::D2DColor(color));
+    rt_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_ALIASED);
+    rt_->DrawTextLayout(D2D1::Point2F(rect.left, rect.top), layout, brush_);
+    rt_->PopAxisAlignedClip();
+    layout->Release();
+    return measured;
+}
+
+void MainWindow::DrawTimelineBlockText(const CalendarBlock& block, const D2D1_RECT_F& blockRect,
+                                       bool includeTime) {
+    const GuiCalendar::TimelineTextLayout policy =
+        GuiCalendar::ComputeTimelineTextLayout(ToGuiRect(blockRect), dpiScale(), includeTime);
+    if (!policy.showTitle) return;
+
+    const D2D1_RECT_F titleMax = ToD2DRect(policy.title);
+    const float titleMaxH = titleMax.bottom - titleMax.top;
+    float titleH = MeasureCalendarText(block.title, titleMax);
+    if (titleH <= 0.0f) titleH = std::min(policy.lineHeight, titleMaxH);
+    if (titleH > titleMaxH) titleH = titleMaxH;
+
+    const bool showTime = policy.showTime && titleH + policy.gap + policy.time.Height() <= policy.content.Height();
+    const float groupH = titleH + (showTime ? policy.gap + policy.time.Height() : 0.0f);
+    float y = policy.content.top;
+    if (policy.content.Height() > groupH) {
+        y += (policy.content.Height() - groupH) * 0.45f;
+    }
+
+    D2D1_RECT_F titleR = titleMax;
+    titleR.top = y;
+    titleR.bottom = std::min(titleR.top + titleH, static_cast<float>(policy.content.bottom));
+    DrawCalendarWrappedText(block.title, titleR, CalendarTheme::kBlockTitle);
+
+    if (!showTime) return;
+    D2D1_RECT_F timeR = ToD2DRect(policy.time);
+    timeR.top = titleR.bottom + policy.gap;
+    timeR.bottom = timeR.top + policy.time.Height();
+    if (timeR.bottom > policy.content.bottom) return;
+
+    const std::wstring timeText = GuiCalendar::FormatTimeText(block.startMinute) + L" - " +
+                                  GuiCalendar::FormatTimeText(block.endMinute);
+    Text(timeText, timeR, CalendarTheme::kBlockTime, smallFormat_);
+}
+
 void MainWindow::DrawCheckbox(const D2D1_RECT_F& box, bool checked) {
     D2D1_ROUNDED_RECT rr{ box, S(4), S(4) };
     if (checked) {
@@ -900,21 +1005,7 @@ void MainWindow::DrawCalendarDay(float W, float H) {
             drawEditFrame(GuiCalendar::EditField::StartTime, editLayout.startFrame);
             drawEditFrame(GuiCalendar::EditField::EndTime, editLayout.endFrame);
         } else {
-            D2D1_RECT_F titleR = r;
-            titleR.left += S(8);
-            titleR.right -= S(8);
-            titleR.top += S(5);
-            titleR.bottom = titleR.top + S(18);
-            Text(block->title, titleR, CalendarTheme::kBlockTitle, smallFormat_);
-
-            D2D1_RECT_F timeR = r;
-            timeR.left += S(8);
-            timeR.right -= S(8);
-            timeR.top += S(22);
-            timeR.bottom = timeR.top + S(16);
-            const std::wstring timeText = GuiCalendar::FormatTimeText(block->startMinute) + L" - " +
-                                          GuiCalendar::FormatTimeText(block->endMinute);
-            Text(timeText, timeR, CalendarTheme::kBlockTime, smallFormat_);
+            DrawTimelineBlockText(*block, r, true);
         }
         ++idx;
     }
@@ -1119,12 +1210,7 @@ void MainWindow::DrawCalendarWeek(float W, float H) {
         const float radius = S(5);
         FillRoundRect(D2D1_ROUNDED_RECT{ r, radius, radius }, bc.fill);
         StrokeRoundRect(D2D1_ROUNDED_RECT{ r, radius, radius }, bc.edge, S(1.0f));
-        D2D1_RECT_F titleR = r;
-        titleR.left += S(4);
-        titleR.right -= S(4);
-        titleR.top += S(3);
-        titleR.bottom = titleR.top + S(16);
-        Text(block->title, titleR, CalendarTheme::kBlockTitle, smallFormat_);
+        DrawTimelineBlockText(*block, r, true);
         ++idx;
     }
 
@@ -1209,23 +1295,37 @@ void MainWindow::DrawCalendarMonth(float W, float H) {
         const std::vector<const CalendarBlock*> blocks = calendar_.BlocksForDay(key);
         if (blocks.empty()) continue;
 
-        const float lineH = S(15);
+        const float lineH = S(14);
         const float firstTop = cell.top + S(20);
         const float avail = cell.bottom - firstTop - S(2);
         int maxLines = (avail > 0.0f) ? static_cast<int>(avail / lineH) : 0;
         const uint32_t titleColor = inMonth ? theme_.colors.text : theme_.colors.textWeak;
         if (maxLines >= 1) {
-            int shown = static_cast<int>(blocks.size()) < maxLines ? static_cast<int>(blocks.size())
-                                                                   : maxLines;
-            if (static_cast<int>(blocks.size()) > maxLines && shown > 0) shown -= 1;
-            int line = 0;
-            for (; line < shown; ++line) {
+            int usedLines = 0;
+            int shown = 0;
+            for (size_t bi = 0; bi < blocks.size(); ++bi) {
+                const int remainingAfter = static_cast<int>(blocks.size() - bi - 1);
+                const bool reserveMore = remainingAfter > 0;
+                const int availableForTitle = maxLines - usedLines - (reserveMore ? 1 : 0);
+                if (availableForTitle <= 0) break;
+
+                const int maxTitleLines = (blocks.size() == 1)
+                    ? std::min(availableForTitle, 4)
+                    : std::min(availableForTitle, 2);
                 D2D1_RECT_F tr = cell;
                 tr.left += S(4);
                 tr.right -= S(4);
-                tr.top = firstTop + static_cast<float>(line) * lineH;
-                tr.bottom = tr.top + lineH;
-                Text(blocks[(size_t)line]->title, tr, titleColor, smallFormat_);
+                tr.top = firstTop + static_cast<float>(usedLines) * lineH;
+                tr.bottom = tr.top + static_cast<float>(maxTitleLines) * lineH;
+
+                float measured = MeasureCalendarText(blocks[bi]->title, tr);
+                int used = static_cast<int>(std::ceil(measured / lineH));
+                if (used < 1) used = 1;
+                if (used > maxTitleLines) used = maxTitleLines;
+                tr.bottom = tr.top + static_cast<float>(used) * lineH;
+                DrawCalendarWrappedText(blocks[bi]->title, tr, titleColor);
+                usedLines += used;
+                shown++;
             }
             const int remaining = static_cast<int>(blocks.size()) - shown;
             if (remaining > 0) {
@@ -1234,7 +1334,7 @@ void MainWindow::DrawCalendarMonth(float W, float H) {
                 D2D1_RECT_F tr = cell;
                 tr.left += S(4);
                 tr.right -= S(4);
-                tr.top = firstTop + static_cast<float>(line) * lineH;
+                tr.top = firstTop + static_cast<float>(usedLines) * lineH;
                 tr.bottom = tr.top + lineH;
                 Text(more, tr, theme_.colors.textWeak, smallFormat_);
             }

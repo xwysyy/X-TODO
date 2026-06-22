@@ -77,6 +77,17 @@ struct TimeRange {
     int endMinute = 15;
 };
 
+struct TimelineTextLayout {
+    Gui::Rect content;
+    Gui::Rect title;
+    Gui::Rect time;
+    float lineHeight = 0.0f;
+    float gap = 0.0f;
+    bool showTitle = false;
+    bool showTime = false;
+    int titleLineCapacity = 0;
+};
+
 enum class EditField {
     None,
     Title,
@@ -96,6 +107,8 @@ struct EditLayout {
 
 Frame ComputeFrame(float windowWidth, float viewportHeight, float dpiScale, bool showToday = true);
 Gui::Rect ComputeBlockRect(const Frame& frame, int blockId, int startMinute, int endMinute);
+TimelineTextLayout ComputeTimelineTextLayout(const Gui::Rect& blockRect, float dpiScale,
+                                             bool includeTime);
 HitResult HitTest(float x, float y, float scroll, float dpiScale, const Frame& frame,
                   const std::vector<BlockRect>& blocks);
 EditLayout ComputeEditLayout(const Gui::Rect& blockRect, float dpiScale);

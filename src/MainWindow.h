@@ -120,6 +120,10 @@ private:
     void DrawCalendarMonth(float windowWidth, float windowHeight);
     void DrawCalendarHeader(const GuiCalendar::HeaderLayout& header, const std::wstring& title);
     std::wstring CalendarHeaderTitle(bool compact) const;
+    float MeasureCalendarText(const std::wstring& text, const D2D1_RECT_F& rect);
+    float DrawCalendarWrappedText(const std::wstring& text, const D2D1_RECT_F& rect, uint32_t color);
+    void DrawTimelineBlockText(const CalendarBlock& block, const D2D1_RECT_F& blockRect,
+                               bool includeTime);
     void DrawSection(); // 已完成折叠条（内容层，文档坐标）
     void DrawEmptyActivePrompt(bool hovered); // 空列表的居中提示（图标 + 文案 + 新建按钮）
     void DrawAddTaskRow(bool hovered);        // 列表底部常驻"新建待办"入口
@@ -289,6 +293,7 @@ private:
     IDWriteFactory*        dwrite_      = nullptr;
     IDWriteTextFormat*     textFormat_  = nullptr;
     IDWriteTextFormat*     smallFormat_ = nullptr;
+    IDWriteTextFormat*     calendarTextFormat_ = nullptr;
     ID2D1SolidColorBrush*  brush_       = nullptr;
 
     TodoModel      model_;

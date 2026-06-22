@@ -53,6 +53,63 @@ Gui::Rect ComputeBlockRect(const Frame& frame, int blockId, int startMinute, int
     return Gui::Rect{ frame.lane.left + 4.0f, y1 + 2.0f, frame.lane.right - 4.0f, bottom - 2.0f };
 }
 
+TimelineTextLayout ComputeTimelineTextLayout(const Gui::Rect& blockRect, float dpiScale,
+                                             bool includeTime) {
+    const float padX = S(6.0f, dpiScale);
+    const float padY = S(4.0f, dpiScale);
+    const float lineH = S(15.0f, dpiScale);
+    const float timeH = S(14.0f, dpiScale);
+    const float gap = S(3.0f, dpiScale);
+    const float minTextW = S(18.0f, dpiScale);
+    const float minTitleH = S(10.0f, dpiScale);
+    const float minTimeW = S(62.0f, dpiScale);
+
+    TimelineTextLayout out;
+    out.lineHeight = lineH;
+    out.gap = gap;
+    out.content = Gui::Rect{
+        blockRect.left + padX,
+        blockRect.top + padY,
+        blockRect.right - padX,
+        blockRect.bottom - padY
+    };
+
+    const float contentW = out.content.Width();
+    const float contentH = out.content.Height();
+    if (contentW < minTextW || contentH < minTitleH) return out;
+
+    out.showTitle = true;
+    out.showTime = includeTime && contentW >= minTimeW &&
+                   contentH >= lineH + gap + timeH;
+
+    float titleH = out.showTime ? (contentH - timeH - gap) : contentH;
+    if (titleH < minTitleH) {
+        out.showTime = false;
+        titleH = contentH;
+    }
+
+    int titleLines = static_cast<int>(titleH / lineH);
+    if (titleLines < 1) titleLines = 1;
+    out.titleLineCapacity = titleLines;
+
+    const float cappedTitleH = lineH * static_cast<float>(titleLines);
+    out.title = Gui::Rect{
+        out.content.left,
+        out.content.top,
+        out.content.right,
+        out.content.top + cappedTitleH
+    };
+    if (out.showTime) {
+        out.time = Gui::Rect{
+            out.content.left,
+            out.content.top + cappedTitleH + gap,
+            out.content.right,
+            out.content.top + cappedTitleH + gap + timeH
+        };
+    }
+    return out;
+}
+
 HitResult HitTest(float x, float y, float scroll, float dpiScale, const Frame& frame,
                   const std::vector<BlockRect>& blocks) {
     if (!frame.timelineViewport.Contains(x, y)) return {};

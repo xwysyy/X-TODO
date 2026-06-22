@@ -146,6 +146,44 @@ void WeekBlockRectsMapDayAndLane() {
     EXPECT_TRUE(a.right <= b.left + 0.5f);
 }
 
+void TimelineTextLayoutUsesAvailableBlockHeight() {
+    const Gui::Rect compact{ 10.0f, 20.0f, 170.0f, 62.0f };
+    const Gui::Rect tall{ 10.0f, 20.0f, 170.0f, 150.0f };
+
+    const GuiCalendar::TimelineTextLayout c =
+        GuiCalendar::ComputeTimelineTextLayout(compact, 1.0f, true);
+    const GuiCalendar::TimelineTextLayout t =
+        GuiCalendar::ComputeTimelineTextLayout(tall, 1.0f, true);
+
+    EXPECT_TRUE(c.showTitle);
+    EXPECT_TRUE(t.showTitle);
+    EXPECT_TRUE(t.showTime);
+    EXPECT_TRUE(t.titleLineCapacity > c.titleLineCapacity);
+    EXPECT_TRUE(t.title.bottom <= t.content.bottom + 0.01f);
+    EXPECT_TRUE(t.time.bottom <= t.content.bottom + 0.01f);
+}
+
+void TimelineTextLayoutDropsTimeBeforeCrowdingTitle() {
+    const Gui::Rect narrow{ 10.0f, 20.0f, 58.0f, 120.0f };
+    const Gui::Rect shortBlock{ 10.0f, 20.0f, 170.0f, 42.0f };
+    const Gui::Rect tiny{ 10.0f, 20.0f, 26.0f, 42.0f };
+
+    const GuiCalendar::TimelineTextLayout n =
+        GuiCalendar::ComputeTimelineTextLayout(narrow, 1.0f, true);
+    const GuiCalendar::TimelineTextLayout s =
+        GuiCalendar::ComputeTimelineTextLayout(shortBlock, 1.0f, true);
+    const GuiCalendar::TimelineTextLayout z =
+        GuiCalendar::ComputeTimelineTextLayout(tiny, 1.0f, true);
+
+    EXPECT_TRUE(n.showTitle);
+    EXPECT_FALSE(n.showTime);
+    EXPECT_TRUE(n.titleLineCapacity >= 1);
+    EXPECT_TRUE(s.showTitle);
+    EXPECT_FALSE(s.showTime);
+    EXPECT_TRUE(s.titleLineCapacity >= 1);
+    EXPECT_FALSE(z.showTitle);
+}
+
 void WeekBodyHitTestRoutesDayHeaderBlockEmpty() {
     const GuiCalendar::WeekFrame f = GuiCalendar::ComputeWeekFrame(700.0f, 600.0f, 1.0f);
     const std::vector<GuiCalendar::WeekBlockRect> none;
@@ -208,6 +246,8 @@ const TestCase kTests[] = {
     {"WeekFrameHasSevenEqualContiguousColumns", WeekFrameHasSevenEqualContiguousColumns},
     {"LanePackingIsDeterministic", LanePackingIsDeterministic},
     {"WeekBlockRectsMapDayAndLane", WeekBlockRectsMapDayAndLane},
+    {"TimelineTextLayoutUsesAvailableBlockHeight", TimelineTextLayoutUsesAvailableBlockHeight},
+    {"TimelineTextLayoutDropsTimeBeforeCrowdingTitle", TimelineTextLayoutDropsTimeBeforeCrowdingTitle},
     {"WeekBodyHitTestRoutesDayHeaderBlockEmpty", WeekBodyHitTestRoutesDayHeaderBlockEmpty},
     {"MonthFrameHasFortyTwoCellGrid", MonthFrameHasFortyTwoCellGrid},
     {"MonthBodyHitTestReturnsCellIndex", MonthBodyHitTestReturnsCellIndex},

@@ -1598,6 +1598,17 @@ bool MainWindow::CreateDeviceResources() {
     smallFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     smallFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
 
+    if (FAILED(dwrite_->CreateTextFormat(
+            Theme::kFontFamily, nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+            S(Theme::kSmallFont), L"", &calendarTextFormat_))) {
+        DiscardDeviceResources();
+        return false;
+    }
+    calendarTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    calendarTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    calendarTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+
     RebuildLayout();
     ClampScroll();
     if (editing()) LayoutEditBox();
@@ -1606,6 +1617,7 @@ bool MainWindow::CreateDeviceResources() {
 
 void MainWindow::DiscardDeviceResources() {
     for (auto& r : rows_) SafeRelease(&r.strikeLayout); // 删除线布局随设备资源一并失效，下次绘制重建
+    SafeRelease(&calendarTextFormat_);
     SafeRelease(&smallFormat_);
     SafeRelease(&textFormat_);
     SafeRelease(&brush_);

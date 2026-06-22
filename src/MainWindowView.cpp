@@ -207,7 +207,6 @@ void MainWindow::RebuildLayout() {
     activeEndY_ = 0.0f;
     emptyActiveRect_ = D2D1::RectF(0, 0, 0, 0);
     addListRect_ = D2D1::RectF(0, 0, 0, 0);
-    calendarTabRect_ = D2D1::RectF(0, 0, 0, 0);
 
     RECT rc;
     GetClientRect(hwnd_, &rc);
@@ -278,14 +277,14 @@ void MainWindow::RebuildLayout() {
     contentH_ = docY;
 
     const GuiLayout::TitleButtons title = GuiLayout::ComputeTitleButtons(W, dpiScale());
-    closeRect_ = ToD2DRect(title.close);
-    pinRect_   = ToD2DRect(title.pin);
-    themeRect_ = ToD2DRect(title.theme);
-    menuRect_  = ToD2DRect(title.menu);
+    closeRect_    = ToD2DRect(title.close);
+    pinRect_      = ToD2DRect(title.pin);
+    calendarBtnRect_ = ToD2DRect(title.calendar);
+    themeRect_    = ToD2DRect(title.theme);
+    menuRect_     = ToD2DRect(title.menu);
 
     std::vector<GuiLayout::TabMetric> tabMetrics;
-    tabMetrics.reserve((size_t)model_.ListCount() + 1);
-    tabMetrics.push_back(GuiLayout::TabMetric{ -1, std::wcslen(T(Str::Calendar, lang_)), 0, GuiLayout::TabKind::Calendar });
+    tabMetrics.reserve((size_t)model_.ListCount());
     for (int i = 0; i < model_.ListCount(); ++i) {
         const TodoList* list = model_.ListAt(i);
         if (!list) continue;
@@ -293,13 +292,8 @@ void MainWindow::RebuildLayout() {
     }
     const GuiLayout::TabStrip tabStrip = GuiLayout::ComputeTabStrip(W, dpiScale(), tabMetrics);
     addListRect_ = ToD2DRect(tabStrip.addList);
-    for (const GuiLayout::TabRect& tab : tabStrip.tabs) {
-        if (tab.kind == GuiLayout::TabKind::Calendar) {
-            calendarTabRect_ = ToD2DRect(tab.rect);
-        } else {
-            listTabs_.push_back(ListTabLayout{ tab.listIndex, ToD2DRect(tab.rect) });
-        }
-    }
+    for (const GuiLayout::TabRect& tab : tabStrip.tabs)
+        listTabs_.push_back(ListTabLayout{ tab.listIndex, ToD2DRect(tab.rect) });
 
     calendarFrame_ = GuiCalendar::ComputeFrame(W, ViewportHeight(), dpiScale());
     BuildCalendarBlockRects();
@@ -336,12 +330,11 @@ MainWindow::Hit MainWindow::HitTest(float x, float y) {
         GuiLayout::TitleButtons title;
         title.close = ToGuiRect(closeRect_);
         title.pin = ToGuiRect(pinRect_);
+        title.calendar = ToGuiRect(calendarBtnRect_);
         title.theme = ToGuiRect(themeRect_);
         title.menu = ToGuiRect(menuRect_);
         std::vector<GuiLayout::TabRect> tabs;
-        tabs.reserve(listTabs_.size() + 1);
-        if (calendarTabRect_.right > calendarTabRect_.left)
-            tabs.push_back(GuiLayout::TabRect{ -1, GuiLayout::TabKind::Calendar, ToGuiRect(calendarTabRect_) });
+        tabs.reserve(listTabs_.size());
         for (const ListTabLayout& tab : listTabs_)
             tabs.push_back(GuiLayout::TabRect{ tab.listIndex, GuiLayout::TabKind::List, ToGuiRect(tab.rect) });
 
@@ -353,8 +346,8 @@ MainWindow::Hit MainWindow::HitTest(float x, float y) {
         case GuiLayout::ChromeHit::Pin:     h.kind = HitKind::Pin;     return h;
         case GuiLayout::ChromeHit::Close:   h.kind = HitKind::Close;   return h;
         case GuiLayout::ChromeHit::AddList: h.kind = HitKind::AddList; return h;
-        case GuiLayout::ChromeHit::CalendarTab:
-            h.kind = HitKind::CalendarTab;
+        case GuiLayout::ChromeHit::Calendar:
+            h.kind = HitKind::Calendar;
             return h;
         case GuiLayout::ChromeHit::ListTab:
             h.kind = HitKind::ListTab;
@@ -605,6 +598,27 @@ void MainWindow::DrawTitleBar() {
     brush_->SetColor(Theme::D2DColor(theme_.colors.paperEdge));
     rt_->DrawEllipse(hole, brush_, S(0.9f));
 
+    // 日历视图开关图标（激活态高亮）
+    {
+        const bool on = calendarActive();
+        if (on) {
+            DrawSurfaceFrame(calendarBtnRect_, S(7),
+                             Theme::Blend(theme_.colors.checkFill, theme_.colors.paper, 0.14f),
+                             Theme::Blend(theme_.colors.checkFill, theme_.colors.paperEdge, 0.5f), S(1));
+        }
+        brush_->SetColor(Theme::D2DColor(on ? theme_.colors.checkFill : theme_.colors.textWeak));
+        const float ccx = (calendarBtnRect_.left + calendarBtnRect_.right) / 2.0f;
+        const float ccy = (calendarBtnRect_.top + calendarBtnRect_.bottom) / 2.0f;
+        D2D1_RECT_F body = D2D1::RectF(ccx - S(6.5f), ccy - S(4.5f), ccx + S(6.5f), ccy + S(6.0f));
+        rt_->DrawRoundedRectangle(D2D1_ROUNDED_RECT{ body, S(2), S(2) }, brush_, S(1.4f));
+        rt_->DrawLine(D2D1::Point2F(body.left, body.top + S(3.5f)),
+                      D2D1::Point2F(body.right, body.top + S(3.5f)), brush_, S(1.2f));
+        rt_->DrawLine(D2D1::Point2F(ccx - S(3.0f), body.top - S(2.0f)),
+                      D2D1::Point2F(ccx - S(3.0f), body.top + S(1.0f)), brush_, S(1.4f));
+        rt_->DrawLine(D2D1::Point2F(ccx + S(3.0f), body.top - S(2.0f)),
+                      D2D1::Point2F(ccx + S(3.0f), body.top + S(1.0f)), brush_, S(1.4f));
+    }
+
     D2D1_POINT_2F pc = D2D1::Point2F((pinRect_.left + pinRect_.right) / 2,
                                      (pinRect_.top + pinRect_.bottom) / 2);
     D2D1_ELLIPSE pe = D2D1::Ellipse(pc, S(5), S(5));
@@ -630,19 +644,6 @@ void MainWindow::DrawListTabs() {
              theme_.colors.paper);
 
     const int current = model_.CurrentListIndex();
-    if (calendarTabRect_.right > calendarTabRect_.left) {
-        const bool selected = calendarActive();
-        if (selected) {
-            DrawSurfaceFrame(calendarTabRect_, S(8), theme_.colors.paperElevated,
-                             theme_.colors.paperEdge, S(1));
-        }
-        D2D1_RECT_F textR = calendarTabRect_;
-        textR.left += S(10);
-        textR.right -= S(9);
-        Text(T(Str::Calendar, lang_), textR,
-             selected ? theme_.colors.text : theme_.colors.textWeak, smallFormat_);
-    }
-
     for (const ListTabLayout& tab : listTabs_) {
         const TodoList* list = model_.ListAt(tab.listIndex);
         if (!list) continue;
@@ -1117,7 +1118,7 @@ void MainWindow::OnLButtonUp(float x, float y) {
     case HitKind::Clear:   ClearCompletedConfirm();   break;
     case HitKind::ListTab: SwitchList(h.itemIndex);   break;
     case HitKind::AddList: CreateList();              break;
-    case HitKind::CalendarTab: SetActiveView(MainView::Calendar); break;
+    case HitKind::Calendar: SetActiveView(calendarActive() ? MainView::Lists : MainView::Calendar); break;
     case HitKind::CalendarPrevDay: SwitchCalendarDay(-1); break;
     case HitKind::CalendarNextDay: SwitchCalendarDay(1);  break;
     case HitKind::CalendarToday:   GoToCalendarToday();   break;
@@ -1143,7 +1144,7 @@ void MainWindow::OnLButtonDoubleClick(float x, float y) {
     if (animActive_ || capsuleShrunk()) return;
     if (editing()) CommitEdit(false);
     Hit h = HitTest(x, y);
-    if (h.kind == HitKind::CalendarTab) { SetActiveView(MainView::Calendar); return; }
+    if (h.kind == HitKind::Calendar) { SetActiveView(calendarActive() ? MainView::Lists : MainView::Calendar); return; }
     if (h.kind == HitKind::ListTab) RenameList(h.itemIndex);
 }
 
@@ -1151,7 +1152,7 @@ void MainWindow::OnRButtonUp(float x, float y) {
     if (animActive_ || capsuleShrunk()) return;
     if (editing()) CommitEdit(false);
     Hit h = HitTest(x, y);
-    if (h.kind == HitKind::CalendarTab) { SetActiveView(MainView::Calendar); return; }
+    if (h.kind == HitKind::Calendar) { SetActiveView(calendarActive() ? MainView::Lists : MainView::Calendar); return; }
     if (h.kind == HitKind::ListTab) ShowListTabMenu(h.itemIndex, x, y);
 }
 

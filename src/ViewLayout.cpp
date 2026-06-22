@@ -34,7 +34,8 @@ TitleButtons ComputeTitleButtons(float windowWidth, float dpiScale) {
     TitleButtons out;
     out.close = Gui::Rect{ windowWidth - margin - button, top, windowWidth - margin, top + button };
     out.pin = Gui::Rect{ out.close.left - gap - button, top, out.close.left - gap, top + button };
-    out.theme = Gui::Rect{ out.pin.left - gap - button, top, out.pin.left - gap, top + button };
+    out.calendar = Gui::Rect{ out.pin.left - gap - button, top, out.pin.left - gap, top + button };
+    out.theme = Gui::Rect{ out.calendar.left - gap - button, top, out.calendar.left - gap, top + button };
     out.menu = Gui::Rect{ out.theme.left - gap - button, top, out.theme.left - gap, top + button };
     return out;
 }
@@ -58,36 +59,17 @@ TabStrip ComputeTabStrip(float windowWidth, float dpiScale, const std::vector<Ta
         tabTop + (tabsH + addSize) / 2.0f,
     };
 
-    auto widthOf = [&](const TabMetric& tab) {
+    float x = pad;
+    const float maxRight = out.addList.left - tabGap;
+    for (const TabMetric& tab : tabs) {
         const float titleW = S(7.0f, dpiScale) * static_cast<float>(tab.titleLength);
-        const float countW = tab.kind == TabKind::List ? CountWidth(tab.activeCount, dpiScale) : 0.0f;
+        const float countW = CountWidth(tab.activeCount, dpiScale);
         float wantW = S(20.0f, dpiScale) + titleW + (countW > 0.0f ? S(7.0f, dpiScale) + countW : 0.0f);
         if (wantW < tabMinW) wantW = tabMinW;
         if (wantW > tabMaxW) wantW = tabMaxW;
-        return wantW;
-    };
-
-    // 日历是固定的视图开关，始终排在 list 标签之后并始终可见。先为它预留宽度，溢出时优先
-    // 丢最右的 list 标签，而不是把日历挤掉。
-    const TabMetric* calendar = nullptr;
-    for (const TabMetric& tab : tabs) {
-        if (tab.kind == TabKind::Calendar) { calendar = &tab; break; }
-    }
-    const float calendarW = calendar ? widthOf(*calendar) : 0.0f;
-    const float listMaxRight =
-        out.addList.left - tabGap - (calendar ? calendarW + tabGap : 0.0f);
-
-    float x = pad;
-    for (const TabMetric& tab : tabs) {
-        if (tab.kind == TabKind::Calendar) continue;
-        const float wantW = widthOf(tab);
-        if (x + wantW > listMaxRight) break;
+        if (x + wantW > maxRight) break;
         out.tabs.push_back(TabRect{ tab.listIndex, tab.kind, Gui::Rect{ x, tabY, x + wantW, tabY + tabH } });
         x += wantW + tabGap;
-    }
-    if (calendar) {
-        out.tabs.push_back(TabRect{ -1, TabKind::Calendar,
-                                    Gui::Rect{ x, tabY, x + calendarW, tabY + tabH } });
     }
     return out;
 }
@@ -144,6 +126,7 @@ ChromeHitResult HitTestChrome(float x, float y, float dpiScale,
     if (y < S(Theme::kTitleH, dpiScale)) {
         if (title.menu.Contains(x, y)) return ChromeHitResult{ ChromeHit::Menu, -1 };
         if (title.theme.Contains(x, y)) return ChromeHitResult{ ChromeHit::Theme, -1 };
+        if (title.calendar.Contains(x, y)) return ChromeHitResult{ ChromeHit::Calendar, -1 };
         if (title.pin.Contains(x, y)) return ChromeHitResult{ ChromeHit::Pin, -1 };
         if (title.close.Contains(x, y)) return ChromeHitResult{ ChromeHit::Close, -1 };
         return {};
@@ -153,7 +136,6 @@ ChromeHitResult HitTestChrome(float x, float y, float dpiScale,
         if (addList.Contains(x, y)) return ChromeHitResult{ ChromeHit::AddList, -1 };
         for (const TabRect& tab : tabs) {
             if (!tab.rect.Contains(x, y)) continue;
-            if (tab.kind == TabKind::Calendar) return ChromeHitResult{ ChromeHit::CalendarTab, -1 };
             return ChromeHitResult{ ChromeHit::ListTab, tab.listIndex };
         }
     }

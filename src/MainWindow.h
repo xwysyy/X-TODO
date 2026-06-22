@@ -76,7 +76,7 @@ private:
         Section,
         Clear,
         EmptyActive,
-        CalendarTab,
+        Calendar,
         ListTab,
         AddList,
         CalendarPrevDay,
@@ -280,7 +280,7 @@ private:
     D2D1_RECT_F menuRect_{};    // 标题栏菜单按钮（固定）
     D2D1_RECT_F themeRect_{};   // 标题栏皮肤按钮（固定）
     D2D1_RECT_F addListRect_{}; // 标签栏新增按钮（固定）
-    D2D1_RECT_F calendarTabRect_{}; // 固定日历标签
+    D2D1_RECT_F calendarBtnRect_{}; // 标题栏日历视图开关
 
     int   hoverRow_   = -1;
     int   editIndex_  = -1;

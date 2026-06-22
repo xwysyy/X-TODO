@@ -165,7 +165,8 @@ void TitleButtonLayoutOrdersActionsAndStaysInsideWindow() {
     const GuiLayout::TitleButtons title = GuiLayout::ComputeTitleButtons(260.0f, 1.0f);
 
     EXPECT_TRUE(title.menu.left < title.theme.left);
-    EXPECT_TRUE(title.theme.left < title.pin.left);
+    EXPECT_TRUE(title.theme.left < title.calendar.left);
+    EXPECT_TRUE(title.calendar.left < title.pin.left);
     EXPECT_TRUE(title.pin.left < title.close.left);
     EXPECT_EQ(title.close.right, 252.0f);
     EXPECT_EQ(title.close.Width(), 24.0f);
@@ -176,24 +177,28 @@ void TitleButtonLayoutOrdersActionsAndStaysInsideWindow() {
 void ChromeHitTestCoversTitleButtonsTabsAndAddList() {
     const GuiLayout::TitleButtons title = GuiLayout::ComputeTitleButtons(360.0f, 1.0f);
     const std::vector<GuiLayout::TabMetric> metrics = {
-        GuiLayout::TabMetric{ -1, 2, 0, GuiLayout::TabKind::Calendar },
         GuiLayout::TabMetric{ 0, 5, 2 },
         GuiLayout::TabMetric{ 1, 12, 0 },
     };
     const GuiLayout::TabStrip strip = GuiLayout::ComputeTabStrip(360.0f, 1.0f, metrics);
-    EXPECT_EQ(strip.tabs.size(), static_cast<size_t>(3));
+    EXPECT_EQ(strip.tabs.size(), static_cast<size_t>(2));
 
     GuiLayout::ChromeHitResult hit = GuiLayout::HitTestChrome(
         Mid(title.menu.left, title.menu.right), Mid(title.menu.top, title.menu.bottom),
         1.0f, title, strip.addList, strip.tabs);
     EXPECT_EQ(hit.kind, GuiLayout::ChromeHit::Menu);
 
+    // Calendar is now a titlebar toggle button, not a tab.
+    hit = GuiLayout::HitTestChrome(
+        Mid(title.calendar.left, title.calendar.right), Mid(title.calendar.top, title.calendar.bottom),
+        1.0f, title, strip.addList, strip.tabs);
+    EXPECT_EQ(hit.kind, GuiLayout::ChromeHit::Calendar);
+
     hit = GuiLayout::HitTestChrome(
         Mid(strip.addList.left, strip.addList.right), Mid(strip.addList.top, strip.addList.bottom),
         1.0f, title, strip.addList, strip.tabs);
     EXPECT_EQ(hit.kind, GuiLayout::ChromeHit::AddList);
 
-    // List tabs come first (from the left); the fixed calendar tab is appended last.
     hit = GuiLayout::HitTestChrome(
         Mid(strip.tabs[0].rect.left, strip.tabs[0].rect.right),
         Mid(strip.tabs[0].rect.top, strip.tabs[0].rect.bottom),
@@ -202,13 +207,11 @@ void ChromeHitTestCoversTitleButtonsTabsAndAddList() {
     EXPECT_EQ(hit.listIndex, 0);
 
     hit = GuiLayout::HitTestChrome(
-        Mid(strip.tabs[2].rect.left, strip.tabs[2].rect.right),
-        Mid(strip.tabs[2].rect.top, strip.tabs[2].rect.bottom),
+        Mid(strip.tabs[1].rect.left, strip.tabs[1].rect.right),
+        Mid(strip.tabs[1].rect.top, strip.tabs[1].rect.bottom),
         1.0f, title, strip.addList, strip.tabs);
-    EXPECT_EQ(hit.kind, GuiLayout::ChromeHit::CalendarTab);
-
-    // The calendar tab sits to the right of every list tab.
-    EXPECT_TRUE(strip.tabs[2].rect.left >= strip.tabs[1].rect.right);
+    EXPECT_EQ(hit.kind, GuiLayout::ChromeHit::ListTab);
+    EXPECT_EQ(hit.listIndex, 1);
 }
 
 void TabStripNeverOverlapsAddList() {

@@ -10,13 +10,13 @@ namespace GuiLayout {
 struct TitleButtons {
     Gui::Rect close;
     Gui::Rect pin;
+    Gui::Rect calendar;
     Gui::Rect theme;
     Gui::Rect menu;
 };
 
 enum class TabKind {
     List,
-    Calendar,
 };
 
 struct TabMetric {
@@ -63,7 +63,7 @@ enum class ChromeHit {
     Close,
     AddList,
     ListTab,
-    CalendarTab,
+    Calendar,
 };
 
 struct ChromeHitResult {

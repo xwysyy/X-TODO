@@ -22,6 +22,7 @@ if(XTODO_BUILD_APP)
         src/main.cpp
         src/MainWindow.cpp
         src/MainWindowView.cpp
+        src/CalendarDate.cpp
         src/CalendarLayout.cpp
         src/CalendarModel.cpp
         src/EditIntent.cpp

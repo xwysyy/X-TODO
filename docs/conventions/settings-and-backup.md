@@ -33,6 +33,9 @@ for an hourly due backup from the main window timer. Failed background backups
 do not interrupt the user; the status is shown the next time settings is open,
 and the timestamp is not advanced.
 
+User-facing docs should describe this as an overwrite mirror, not a restore
+system or history feature.
+
 Backup writes must go through a temporary file and replace the target
 `data.json` atomically. The backup directory must not be the current data
 directory, because that would copy the file onto itself.

@@ -36,7 +36,9 @@ X-TODO is an always-on desktop to-do note. A frameless slip stays on your deskto
 - **Drag to reorder.** Move an item with its children. Finished blocks fold into a collapsible "Completed" section, and every delete asks first.
 - **Three layouts:** a normal window, sunk into the desktop, or folded into a side capsule that slides out on hover.
 - **Saves itself.** Reopens exactly as you left it; the data is a single text file.
+- **Auto backup.** Pick a folder in Settings, and X-TODO mirrors `data.json` there about once per hour.
 - **Stays in the tray.** Closing hides it, a double-click brings it back, startup launch is optional.
+- **Settings in one place.** Language, startup launch, and data backup live in Settings instead of filling the tray menu.
 - **Themeable.** Five built-in light themes; load your own theme files, or follow the system light/dark mode.
 - **Pure Win32 + Direct2D.** No .NET, no browser engine, one portable exe.
 
@@ -44,7 +46,7 @@ X-TODO is an always-on desktop to-do note. A frameless slip stays on your deskto
 
 Open [Releases](https://github.com/xwysyy/X-TODO/releases), download `x-todo.exe` from the latest version, and double-click it. Portable, no install. Development builds are still available from the [Actions](https://github.com/xwysyy/X-TODO/actions) artifacts.
 
-> Tasks are stored in `%APPDATA%\x-todo\`. Uninstalling leaves it untouched; copy that folder to another machine and your list comes along.
+> Tasks are stored in `%APPDATA%\x-todo\data.json`. Settings can also mirror that file to `<backup folder>\data.json`. Uninstalling leaves the app data folder untouched; copy it to another machine and your list comes along.
 
 ## Usage
 
@@ -60,10 +62,12 @@ Open [Releases](https://github.com/xwysyy/X-TODO/releases), download `x-todo.exe
 | Reorder | Drag the handle on the right of an item; child items move with it |
 | Move / resize | Drag the title bar to move, drag the edges to resize |
 | Switch layout | Right-click the tray icon: normal window / desktop / side capsule |
+| Settings | Open Settings from the title-bar or tray menu to change language, startup launch, and backup folder |
+| Backup | Pick a folder in Settings; X-TODO overwrites `<folder>\data.json` about once per hour |
 
 ## Themes
 
-Five built-in themes: Paper, Mint, Sky, Rose, and Sand. Right-click the tray icon or open the title-bar menu and pick one under "Theme". Choose "Follow system" to track the Windows light/dark mode automatically. Switching a theme recolors the main window, the side capsule, menus, the confirm dialog, and the inline editor. The tray keeps the app icon fixed.
+Five built-in themes: Paper, Mint, Sky, Rose, and Sand. Right-click the tray icon or open the title-bar menu and pick one under "Theme". Choose "Follow system" to track the Windows light/dark mode automatically. Switching a theme recolors the main window, the side capsule, menus, the confirm dialog, the Settings window, the theme manager, and the inline editor. The tray keeps the app icon fixed.
 
 ### Custom themes
 

@@ -10,9 +10,12 @@ capsule paint, dialogs, prompts, popup menus, the theme manager, and native
 child-control coloring must read the active `ThemeVisual` or an explicit
 snapshot captured when the popup opens.
 
-Direct2D code uses `Theme::D2DColor`. GDI code uses `Theme::GdiColor`.
-Do not add new render-facing global color constants such as `Theme::kPaper`,
-`Theme::kText`, or `Theme::kDanger`.
+Direct2D and DirectWrite self-drawn surfaces use `Theme::D2DColor`.
+`Theme::GdiColor` is only for remaining Win32/GDI boundaries such as native
+child-control coloring, region/icon/bitmap interop, or APIs that require
+`COLORREF`. Settings-like popup surfaces must stay on Direct2D and DirectWrite;
+see `docs/conventions/surface-rendering.md`. Do not add new render-facing global
+color constants such as `Theme::kPaper`, `Theme::kText`, or `Theme::kDanger`.
 
 Theme files do not own layout. Window geometry, hit-test widths, row heights,
 font family, font sizes, capsule dimensions, animation timing, keyboard
